@@ -2142,7 +2142,7 @@ const setTabs = () => [
   ...(S.status.accounts === false ? [] : [["profile", "Profile", "user", "Your name, email and how you sign in"],
                                           ["security", "Security", "lock", "Password and signing out"]]),
   ["apps", "Connected apps", "plug", "Where your clips get posted"],
-  ...(S.status.user?.is_admin ? [["speech", "Speech models", "chat", "The languages PeakCut can hear"],
+  ...(S.status.user?.is_admin ? [["speech", "Speech models", "chat", "The languages Aisha Video Studio can hear"],
                                  ["storage", "Storage", "folder", "Where videos and clips are kept"]] : [])];
 function aiHints() {
   const k = S.ai, sel = $("#ai_provider"); if (!k || !sel) return;
@@ -2177,7 +2177,7 @@ async function drawSettings() {
     }
     if (tab === "speech") {
       const r = await api("/api/speech");
-      body.innerHTML = `<section class="set-sec"><h2>Speech models</h2><p class="help">PeakCut writes down what is said in a video with a speech model that runs on this computer, one per language. English is always here. Add another language to clip videos spoken in it, then choose that language when adding a video, or on a creator's Setup.</p>
+      body.innerHTML = `<section class="set-sec"><h2>Speech models</h2><p class="help">Aisha Video Studio writes down what is said in a video with a speech model that runs on this computer, one per language. English is always here. Add another language to clip videos spoken in it, then choose that language when adding a video, or on a creator's Setup.</p>
         <div class="speech-list">${r.models.map(m => `<div class="speech-row"><div class="speech-info"><b>${esc(langName(m.lang))}</b><span class="sub">${esc(m.size_mb)} MB · ${esc(m.credit)}</span>
             ${m.state === "downloading" ? `<div class="bar"><i style="width:${m.percent}%"></i></div>` : ""}${m.error && m.state === "missing" ? `<span class="sub" style="color:var(--bad)">The last download failed. Check the internet connection and try again.</span>` : ""}</div>
           <div class="row">${m.state === "ready" ? `<span class="pill ok">${ic("check")}Ready</span>${m.default ? "" : `<button class="btn sm ghost" data-act="speechdel" data-v="${esc(m.lang)}">${ic("trash")}Remove</button>`}`
@@ -2289,7 +2289,7 @@ async function ytCookiesCard(logo) {
         <li>Paste the whole file below and save. Then close that private window without signing out.</li></ol>
       <label class="f">cookies.txt<textarea id="ytc" rows="6" spellcheck="false" autocomplete="off" placeholder="# Netscape HTTP Cookie File"></textarea></label>
       <div class="row"><button class="btn primary" data-act="ytcookies">Save</button><button class="btn ghost" data-act="appsetup" data-p="">Close</button></div></div>` : "";
-  return `<section class="set-sec"><h2>YouTube links</h2><p class="help">Only needed when YouTube links (videos or lives) fail with "YouTube isn't letting PeakCut download".</p>
+  return `<section class="set-sec"><h2>YouTube links</h2><p class="help">Only needed when YouTube links (videos or lives) fail with "YouTube isn't letting Aisha Video Studio download".</p>
     <div class="apps"><div class="appcard"><span class="applogo" style="background:#FF0000">${logo}</span>
     <div class="apptx"><b>YouTube cookies</b><span>${st.saved ? `Saved ${new Date(st.updated * 1000).toLocaleString()}. Used for every YouTube link.` : "None saved."}</span></div>
     <div class="appact">${act}</div>${panel}</div></div></section>`;

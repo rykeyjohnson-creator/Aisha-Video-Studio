@@ -159,7 +159,7 @@ def _load_sherpa():
             return mod
     except OSError:
         pass
-    raise RuntimeError("PeakCut is in a folder too deep for Windows to load the speech model from. Move the PeakCut "
+    raise RuntimeError("Aisha Video Studio is in a folder too deep for Windows to load the speech model from. Move the Aisha Video Studio "
                        "folder somewhere short, like C:\\peakcut, and start it again.") from first
 
 

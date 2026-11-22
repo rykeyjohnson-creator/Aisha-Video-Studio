@@ -106,7 +106,7 @@ def _fetch(lang: str):
     try:
         got_sha = _save(lang, tmp)
         if want and got_sha != want:
-            raise WrongFile(f"its fingerprint (SHA-256) is {got_sha}, but PeakCut expects {want}")
+            raise WrongFile(f"its fingerprint (SHA-256) is {got_sha}, but Aisha Video Studio expects {want}")
         shutil.rmtree(part, ignore_errors=True)
         part.mkdir()
         with tarfile.open(tmp, "r:bz2") as t:
@@ -122,13 +122,13 @@ def _fetch(lang: str):
         print(f"  {label(lang)} speech model ready.\n", flush=True)
     except WrongFile as e:
         st["error"] = f"The downloaded file is not the expected one: {e}."
-        raise RuntimeError(f"PeakCut downloaded the {label(lang)} speech model, but the file is not the one it expects, "
+        raise RuntimeError(f"Aisha Video Studio downloaded the {label(lang)} speech model, but the file is not the one it expects, "
                            "so it was not used: it may have been changed or damaged on the way. Nothing was unpacked. "
                            "Try again later. If a different download address was set (a mirror), it must hold the very "
                            f"same file. Details: {e}.") from e
     except Exception as e:  # noqa: BLE001
         st["error"] = safe.friendly(e, 200)
-        raise RuntimeError(f"PeakCut couldn't download its {label(lang)} speech model (about {size} MB, needed once). "
+        raise RuntimeError(f"Aisha Video Studio couldn't download its {label(lang)} speech model (about {size} MB, needed once). "
                            "Check the internet connection and free disk space, then try again, or run "
                            f"python -m studio.fetch_model {lang} to see what goes wrong. What it reported: {st['error']}") from e
     finally:
@@ -156,7 +156,7 @@ def start(lang: str) -> None:
 
 
 def remove(lang: str) -> None:
-    """Delete a downloaded model to free the space. English stays: it is what PeakCut uses by default."""
+    """Delete a downloaded model to free the space. English stays: it is what Aisha Video Studio uses by default."""
     from . import transcribe
     if lang == DEFAULT:
         raise ValueError("The English speech model is always kept.")

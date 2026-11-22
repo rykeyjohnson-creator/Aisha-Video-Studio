@@ -34,9 +34,9 @@ creator's live stream and clip the highlights while the stream is still running.
 ## Quick start
 
 You need Python 3.10 or newer and `ffmpeg`. On Windows: `winget install Gyan.FFmpeg`. On a Mac: `brew install ffmpeg`.
-On Linux: `sudo apt install ffmpeg`. PeakCut finds it by itself and tells you in the dashboard if it is missing.
+On Linux: `sudo apt install ffmpeg`. Aisha Video Studio finds it by itself and tells you in the dashboard if it is missing.
 
-Put PeakCut in a short folder that stays put: `C:\peakcut` on Windows, `~/peakcut` on a Mac or Linux. Not inside a
+Put Aisha Video Studio in a short folder that stays put: `C:\peakcut` on Windows, `~/peakcut` on a Mac or Linux. Not inside a
 temporary folder or an AI assistant's workspace: those get cleaned up, and on Windows a folder that deep stops the
 speech model from loading (Windows can't open files whose full path is over 260 characters). If an AI assistant
 installs it for you, it should ask you where to put it first ([AGENTS.md](AGENTS.md) tells it to).
@@ -78,7 +78,7 @@ your AI service, paste your key and press **Save and test** (see [Choose your AI
 
 ## Choose your AI
 
-PeakCut needs a chat model that can return JSON. The easy way is in the dashboard: **Settings, AI**. Pick the
+Aisha Video Studio needs a chat model that can return JSON. The easy way is in the dashboard: **Settings, AI**. Pick the
 service, paste your key, press **Find models** to choose from the service's own list, then **Save and test**. The
 key is kept in the data folder on your machine and is never shown again.
 
@@ -110,8 +110,8 @@ PEAKCUT_AI_KEY=your-key-here
 
 ### Videos in Arabic
 
-PeakCut hears English by default. To clip videos in Arabic, add the Arabic speech model once in
-**Settings → Speech models** (about 107 MB), or choose **Arabic** under Options when adding a video and PeakCut
+Aisha Video Studio hears English by default. To clip videos in Arabic, add the Arabic speech model once in
+**Settings → Speech models** (about 107 MB), or choose **Arabic** under Options when adding a video and Aisha Video Studio
 offers to download it. Set a creator's language on their Setup page so their live recordings use it too.
 It understands Modern Standard Arabic and everyday dialects, and the AI turns English words said in between
 back into English. Captions on the clips are in English.
@@ -135,7 +135,7 @@ Everything is set through environment variables, normally in a `.env` file next 
 
 This only matters with accounts switched on (`PEAKCUT_ACCOUNTS=1`); without them you are the owner and can do
 everything. An account is an admin only when the database says so. No email address is special in the code and no web request
-can change a role. Do it on the machine that runs PeakCut:
+can change a role. Do it on the machine that runs Aisha Video Studio:
 
 ```bash
 python -m studio.admin grant you@example.com
@@ -162,18 +162,18 @@ assistants.
 
 ## Where your videos and clips are kept
 
-Everything PeakCut keeps is in one folder: videos, clips, recordings, creators, settings and the speech model. By
-default it is the `data` folder inside PeakCut. **Settings, Storage** shows the folder and how much room its drive
-has, opens it in one click, and lets you move it to another drive: choose the new folder, and PeakCut moves
-everything there the next time it starts. If the drive is nearly full, PeakCut says so and stops taking new videos
+Everything Aisha Video Studio keeps is in one folder: videos, clips, recordings, creators, settings and the speech model. By
+default it is the `data` folder inside Aisha Video Studio. **Settings, Storage** shows the folder and how much room its drive
+has, opens it in one click, and lets you move it to another drive: choose the new folder, and Aisha Video Studio moves
+everything there the next time it starts. If the drive is nearly full, Aisha Video Studio says so and stops taking new videos
 until there is room. (`PEAKCUT_DATA` in `.env` still works and takes priority.)
 
 ## Updating
 
-PeakCut checks GitHub once a minute while it runs. When a newer version is out, the dashboard shows a notice
+Aisha Video Studio checks GitHub once a minute while it runs. When a newer version is out, the dashboard shows a notice
 within a minute or two (no restart needed), with what changed
 and how to update: ask your AI coding assistant to do it (the notice has a sentence to paste), or run
-`git pull && pip install -r requirements.txt` in the PeakCut folder and restart it (with Docker:
+`git pull && pip install -r requirements.txt` in the Aisha Video Studio folder and restart it (with Docker:
 `git pull && docker compose up -d --build`). Your `.env`, keys and clips are not touched. Only the two commit ids
 are sent to GitHub; set `PEAKCUT_UPDATE_CHECK=0` to turn the check off.
 
@@ -206,7 +206,7 @@ queue tests against it, then removes it. It needs no keys and never touches real
 
 ## Security
 
-- With sign-in off, PeakCut listens on this computer only (`127.0.0.1`), refuses changes sent by other websites,
+- With sign-in off, Aisha Video Studio listens on this computer only (`127.0.0.1`), refuses changes sent by other websites,
   and only answers to its own address. Do not expose it to the internet that way: turn accounts on.
 - Passwords are stored only as salted scrypt hashes. Sessions are random tokens stored hashed; cookies are HTTP-only.
 - Every route works out who is asking from the session, never from the request, so users only reach their own data.
