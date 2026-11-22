@@ -4,7 +4,6 @@ import json
 import os
 import math
 import queue
-import re
 import shutil
 import threading
 import time
@@ -12,7 +11,7 @@ import traceback
 import uuid
 from pathlib import Path
 
-from . import brain, config, creators, ctx, facecam, fetch_model, games, hashtags, load, media, quality, render, roman, safe, transcribe, usage
+from . import brain, config, creators, ctx, facecam, games, load, media, quality, render, roman, safe, transcribe, usage
 
 class _FairQueue:
     """Whose video is next. Each person has their own line and the lines take turns, so someone who adds ten
@@ -109,11 +108,11 @@ _lock = threading.RLock()
 on_clip_ready: list = []   # callbacks (job, clip), run once when a clip first finishes
 
 DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "layout": "blur", "quality": 720,
-            "range_start": None, "range_end": None, "captions": True, "hook_text": "", "description_text": "",
-            "lang": "en"}   # lang: the language spoken
+            "out_w": config.OUT_W, "out_h": config.OUT_H, "range_start": None, "range_end": None, "captions": True}
 
 
-LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
+LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080),
+          "out_w": (240, 2160), "out_h": (240, 2160)}
 
 
 def clean_options(options) -> dict:
@@ -125,20 +124,17 @@ def clean_options(options) -> dict:
                 raise ValueError("Captions must be on or off.")
             out[k] = v
             continue
-        if k in ("hook_text", "description_text"):     # kept even when empty: it clears the creator's own text for this video
-            out[k] = creators.clean_hook(v) if k == "hook_text" else creators.clean_description(v)
-            continue
         if k not in DEFAULTS or v in ("", None):
             continue
         if k in LIMITS:
             lo, hi = LIMITS[k]
             v = max(lo, min(hi, int(float(v))))
+            if k in ("out_w", "out_h"):
+                v = v // 2 * 2
         elif k == "style":
             v = v if v in render.STYLES else DEFAULTS["style"]
         elif k == "layout":
             v = v if v in render.LAYOUTS else DEFAULTS["layout"]
-        elif k == "lang":
-            v = v if fetch_model.known(v) else DEFAULTS["lang"]
         else:                                    # range_start, range_end: seconds into the video
             v = float(v)
             if not math.isfinite(v) or v < 0:
@@ -187,27 +183,7 @@ def save(job):
             return
         tmp = d / "job.json.tmp"
         tmp.write_text(text, encoding="utf-8")
-        _put_in_place(tmp, d / "job.json")
-
-
-def _put_in_place(tmp: Path, target: Path):
-    """Move the freshly written job.json over the old one.
-
-    Windows refuses this ("Access is denied") for a moment whenever anything else has the old file open: a virus
-    scanner, the search indexer, or another part of PeakCut reading it. A download saves many times a second, so it
-    happens, and it used to stop the whole video. So it is tried again a few times, and if the file is still busy
-    it is written in place; as a last resort this save is skipped, because the next one carries the same news."""
-    for i in range(8):
-        try:
-            tmp.replace(target)
-            return
-        except PermissionError:
-            time.sleep(0.05 * (i + 1))
-    try:
-        target.write_text(tmp.read_text(encoding="utf-8"), encoding="utf-8")
-        tmp.unlink(missing_ok=True)
-    except OSError:
-        pass
+        tmp.replace(d / "job.json")
 
 
 def _set(job, **kw):
@@ -315,9 +291,7 @@ def create(source: dict, options: dict, enqueue=True, creator=None, kind="video"
     c = creators.get(creator) if creator else None
     if c:
         d = creators.root(c["id"]) / ("live" if kind == "live" else "videos") / jid
-        base = {**DEFAULTS, **{k: c[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions", "lang") if k in c},
-                "hook_text": creators.clean_hook(c.get("hook_text")),
-                "description_text": creators.clean_description(c.get("description_text"))}
+        base = {**DEFAULTS, **{k: c[k] for k in ("max_clips", "min_len", "max_len", "style", "layout", "captions")}}
     else:
         d, base, creator = config.user_dir(ctx.uid()) / "jobs" / jid, dict(DEFAULTS), None
     opts = {**base, **clean_options(options)}
@@ -390,8 +364,6 @@ def request_render(jid, cid, changes: dict):
     for k in ("hook", "title", "description", "style", "layout"):
         if k in changes:
             new[k] = str(changes[k])[:{"hook": 60, "title": 100, "description": 2000}.get(k, 20)]
-    if "hashtags" in changes:
-        new["hashtags"] = clean_hashtags(changes["hashtags"])
     if new.get("style") not in render.STYLES:
         new["style"] = DEFAULTS["style"]
     if new.get("layout") not in render.LAYOUTS:
@@ -399,56 +371,6 @@ def request_render(jid, cid, changes: dict):
     clip.update(new, status="queued")
     save(job)
     _q.put(("clip", jid, cid))
-
-
-def clean_hashtags(v) -> list:
-    """Hashtags typed by a person ("#funny gaming") or sent by the page as a list: plain words, at most 8."""
-    if isinstance(v, str):
-        v = v.split()
-    if not isinstance(v, list):
-        raise ValueError("Hashtags must be words separated by spaces.")
-    tags = [re.sub(r"\W", "", str(h))[:30] for h in v[:50] if isinstance(h, (str, int))]
-    return [t for t in tags if t][:8]
-
-
-def save_post_text(job, clip, changes: dict):
-    """Change a clip's title, description and hashtags without making the clip again. Posting reads them
-    from the clip when it uploads, so the next post (or one still waiting in the queue) uses the new text."""
-    text = {k: str(changes[k] or "")[:{"title": 100, "description": 2000}[k]] for k in ("title", "description") if k in changes}
-    if "hashtags" in changes:
-        text["hashtags"] = clean_hashtags(changes["hashtags"])
-    if clip.get("hashtags_in_description") and not clip.get("fixed_description") and text:
-        # This clip's description ends with its hashtags, and posting does not add them again. So the
-        # description is put back together from the Hashtags box: the words, then one line of tags.
-        desc = hashtags._TAG_IN_TEXT.sub("", text.get("description", clip.get("description") or "")).strip()
-        line = " ".join("#" + t for t in text.get("hashtags", clip.get("hashtags") or []))
-        text["description"] = ((desc + "\n\n" + line).strip() if desc else line)[:2000]
-    with _lock:
-        clip.update(text)
-    save(job)
-    side = Path(job["dir"]) / "clips" / f"{clip['id']}.json"   # the copy that sits next to the video file
-    try:
-        if side.is_file():
-            side.write_text(json.dumps({**json.loads(side.read_text(encoding="utf-8")), **text}, indent=1), encoding="utf-8")
-    except (OSError, ValueError):
-        pass
-
-
-def spoken_in(job, clip) -> str:
-    """What is said during a clip, from the video's transcript."""
-    try:
-        words = json.loads((Path(job["dir"]) / "words.json").read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return ""
-    return " ".join(str(w.get("w", "")) for w in words
-                    if isinstance(w, dict) and clip["start"] - 0.5 <= _f(w.get("s")) <= clip["end"] + 0.5)
-
-
-def _f(v):
-    try:
-        return float(v)
-    except (TypeError, ValueError):
-        return -1.0
 
 
 def render_one(job, clip, words):
@@ -464,7 +386,9 @@ def render_one(job, clip, words):
             clip["end"] = min(clip["end"], job["duration"])
         local = dict(clip, start=clip["start"] - off, end=clip["end"] - off, hook=roman.to_roman(clip.get("hook") or ""))
         near = _caption_words(job, clip, words, off) if clip.get("captions", True) else []
-        out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"])
+        out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"],
+                                 out_w=int(job["options"].get("out_w", config.OUT_W)),
+                                 out_h=int(job["options"].get("out_h", config.OUT_H)))
         clip.update(out, status="done", version=clip.get("version", 0) + 1, error=None)
         post = {k: clip[k] for k in ("title", "description", "hashtags", "hook", "start", "end", "score")}
         (d / "clips" / f"{clip['id']}.json").write_text(json.dumps(post, indent=1), encoding="utf-8")
@@ -651,14 +575,11 @@ def _run_job(job):
         _set(job, status="running", stage="Picking up where it stopped", error=None)
     else:
         _set(job, status="running", stage="Getting the audio", progress=0.03, error=None, clips=[], ai={}, done_blocks=0)
-    speech = o.get("lang") if fetch_model.known(o.get("lang")) else fetch_model.DEFAULT   # the language spoken
-    if speech == fetch_model.DEFAULT and not transcribe.model_ready() and not transcribe.REMOTE:
+    if not transcribe.model_ready() and not transcribe.REMOTE:
+        from . import fetch_model
         _set(job, stage="Getting the speech model (one time, about 480 MB)")
         fetch_model.ensure()
         _set(job, stage="Getting the audio")
-    could_borrow = src["type"] == "url" and config.YT_TRANSCRIPT and media.is_youtube(src["url"])
-    if speech != fetch_model.DEFAULT and not transcribe.REMOTE and not could_borrow and fetch_model.status(speech) == "missing":
-        fetch_model.ensure(speech, start=False)      # says what to do, before any time is spent on the download
     fetch = ThreadPoolExecutor(1)
     video = None
     if src["type"] == "url":
@@ -678,14 +599,7 @@ def _run_job(job):
         pieces = span > LONG_VIDEO or meta["duration"] <= 0
         if not pieces:  # shorter video: fetch all of it in the background while the audio is worked on
             video = fetch.submit(media.download, src["url"], d, int(o["quality"]))
-        seen = [-1.0]
-
-        def got(p):                       # the bar moves in whole percents: no need to save the file a hundred times a second
-            if p - seen[0] >= 0.01 or p >= 1:
-                seen[0] = p
-                _set(job, progress=0.03 + 0.1 * p)
-
-        audio_file = media.download_audio(src["url"], d, got)
+        audio_file = media.download_audio(src["url"], d, lambda p: _set(job, progress=0.03 + 0.1 * p))
     else:
         pieces, audio_file = False, Path(src["path"])
         info = media.probe(audio_file)
@@ -736,13 +650,12 @@ def _run_job(job):
         began[clip["id"]] = time.time()
         if src["type"] == "url" and (pieces or not whole_video()):
             _fetch_piece(job, clip, audio)
-        if clip["status"] != "error" and clip.get("captions", True) and yt_model:
+        if clip["status"] != "error" and clip.get("captions", True) and yt and yt[1].lower().startswith("en"):
             # The clip was found with YouTube's transcript. What is shown on screen comes from our own model,
             # run on just this clip: full punctuation, nothing blanked out, timings to the word.
             a0, b0 = max(lo, int((clip["start"] - 1.5) * 16000)), min(hi, int((clip["end"] + 1.5) * 16000))
             try:
-                tw = [dict(w, s=round(w["s"] + a0 / 16000, 2), e=round(w["e"] + a0 / 16000, 2))
-                      for w in transcribe.transcribe(audio[a0:b0], lang=yt_model)]
+                tw = [dict(w, s=round(w["s"] + a0 / 16000, 2), e=round(w["e"] + a0 / 16000, 2)) for w in transcribe.transcribe(audio[a0:b0])]
             except Exception:  # noqa: BLE001 - the clip is still made, with YouTube's words
                 tw = []
             if len(tw) >= 3:
@@ -767,16 +680,7 @@ def _run_job(job):
         if yt and not _covers(yt[0], lo / 16000, hi / 16000):
             yt = None
         job["transcript_from"] = "youtube" if yt else "own"
-    # The language spoken decides the captions: YouTube's word for it when its transcript is used, else the choice made.
-    job["lang"] = yt[1] if yt else speech
-    # A clip found with YouTube's transcript gets its on-screen words from our own model, when there is one here
-    # for the language YouTube says was spoken (English always; others once they are downloaded).
-    yt_code = (yt[1].lower().split("-")[0] if yt else "")
-    yt_model = yt_code if fetch_model.known(yt_code) and (yt_code == fetch_model.DEFAULT or fetch_model.ready(yt_code)) else ""
-    if not yt and speech != fetch_model.DEFAULT and not transcribe.REMOTE and not fetch_model.ready(speech):
-        if fetch_model.state[speech]["doing"]:
-            _set(job, stage=f"Waiting for the {fetch_model.label(speech)} speech model to finish downloading")
-        fetch_model.ensure(speech, start=False)      # waits for a download already running, else says what to do
+        job["lang"] = yt[1] if yt else ""          # the language spoken, when YouTube says (decides the captions)
     if resuming:
         try:
             words = json.loads((d / "words.json").read_text(encoding="utf-8"))
@@ -806,7 +710,7 @@ def _run_job(job):
                 if now_on[0] == i and p - last[0] > 0.05:      # only the part being shown moves the bar
                     last[0] = p
                     _set(job, progress=max(job["progress"], 0.14 + 0.78 * ((a_ - lo) + p * (b_ - a_)) / max(1, hi - lo)))
-            heard[i] = ahead.submit(ctx.bind(transcribe.transcribe), audio[a_:b_], tp, speech)
+            heard[i] = ahead.submit(ctx.bind(transcribe.transcribe), audio[a_:b_], tp)
 
     # The ad breaks and static screens of the whole video, found once. It reads the video end to end,
     # so it is done here rather than for each clip, and only when asked for.
@@ -858,12 +762,6 @@ def _run_job(job):
             c.update(id=f"clip{len(job['clips']) + 1:02d}", start=round(c["start"] + shift, 2),
                      end=round(c["end"] + shift, 2), style=o["style"], layout=o["layout"],
                      captions=o.get("captions", True), status="queued", version=0)
-            if o.get("hook_text"):        # the person's own big text, on every clip, in place of the AI's
-                c["hook"] = o["hook_text"]
-            if o.get("description_text"):  # ...and their own description, exactly as written
-                c["description"], c["fixed_description"] = o["description_text"], True
-            else:                          # no description of their own: 3 to 5 fitting hashtags go at the end of the AI's
-                hashtags.apply(c, words, job["title"], job["uploader"], game)
             # Only the gameplay layout uses a webcam, so it is only looked for then, and only once: a
             # stream with no webcam is not looked for again on every clip of it.
             if o["layout"] == "gameplay" and face is False:

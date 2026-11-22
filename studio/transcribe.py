@@ -1,19 +1,16 @@
-"""Speech to text with word timestamps, through sherpa-onnx: Parakeet 0.6b for English, and one model per other
-spoken language (see MODELS in fetch_model.py). Each language has its own copies of its model; one that has not
-been used for a while is put away to free the memory (English stays).
+"""Speech to text with word timestamps, using Parakeet 0.6b through sherpa-onnx.
 
 It runs in one of two places. On this machine's processors (the default), or, when PEAKCUT_ASR_URL is set, on a
 separate machine with a graphics card (studio/asr_worker.py), which does the same work many times faster. If that
 machine cannot be reached, the pieces are done here instead, so transcription never stops because of it."""
 import os
 import queue
-import re
 import threading
 import time
 
 import numpy as np
 
-from . import fetch_model
+from . import config
 
 _lock = threading.Lock()
 
@@ -24,43 +21,8 @@ _CPUS = os.cpu_count() or 4
 PROVIDER = os.environ.get("PEAKCUT_ASR_PROVIDER", "cpu").strip().lower() or "cpu"      # "cuda" on a graphics card
 THREADS = int(os.environ.get("PEAKCUT_ASR_THREADS") or (4 if _CPUS >= 8 else max(2, _CPUS - 2)))
 COPIES = int(os.environ.get("PEAKCUT_ASR_COPIES") or (1 if PROVIDER != "cpu" else max(1, _CPUS // THREADS) if _CPUS >= 8 else 1))
-IDLE = int(os.environ.get("PEAKCUT_ASR_IDLE_MINUTES", "15")) * 60      # a language unused this long is put away
-
-
-class _Pool:
-    """The copies of one language's model: the idle ones wait in `free`; `made` counts all of them."""
-    def __init__(self):
-        self.free: "queue.LifoQueue" = queue.LifoQueue()
-        self.made = 0
-        self.used = time.time()
-
-
-_pools: dict = {}
-
-
-def _pool(lang: str) -> _Pool:
-    """This language's copies, and a chance to put away other languages nobody has used for a while."""
-    now = time.time()
-    with _lock:
-        for other, p in list(_pools.items()):
-            if other not in (lang, fetch_model.DEFAULT) and now - p.used > IDLE and p.free.qsize() >= p.made:
-                del _pools[other]
-        p = _pools.get(lang)
-        if p is None:
-            p = _pools[lang] = _Pool()
-        p.used = now
-        return p
-
-
-def unload(lang: str) -> bool:
-    """Forget a language's copies (before its model is deleted). False if one is in use right now."""
-    with _lock:
-        p = _pools.get(lang)
-        if p is not None:
-            if p.free.qsize() < p.made:
-                return False
-            del _pools[lang]
-    return True
+_free: "queue.LifoQueue" = queue.LifoQueue()
+_made = 0
 
 # The machine with the graphics card, if there is one.
 REMOTE = os.environ.get("PEAKCUT_ASR_URL", "").strip().rstrip("/")
@@ -71,11 +33,11 @@ REMOTE_PARALLEL = int(os.environ.get("PEAKCUT_ASR_REMOTE_PARALLEL", "4"))   # pi
 # time (all videos together), and the rest is done on this machine's own processors at the same moment: both are used.
 REMOTE_SLOTS = threading.BoundedSemaphore(max(1, int(os.environ.get("PEAKCUT_ASR_REMOTE_INFLIGHT", "6"))))
 _remote_down_until = 0.0
-_remote_lacks: dict = {}       # language -> until when: the card's machine has no model for it, so it is done here
 
 
-def model_ready(lang: str = fetch_model.DEFAULT) -> bool:
-    return fetch_model.ready(lang)
+def model_ready() -> bool:
+    from . import fetch_model
+    return fetch_model.ready()
 
 
 def _model_files(d) -> dict:
@@ -163,12 +125,11 @@ def _load_sherpa():
                        "folder somewhere short, like C:\\peakcut, and start it again.") from first
 
 
-def _new(lang: str = fetch_model.DEFAULT):
+def _new():
     sherpa_onnx = _sherpa()
-    # English is downloaded here, once, if it was never fetched. Other languages are only ever downloaded when
-    # someone asks for them; here we only wait for a download already running.
-    fetch_model.ensure(lang, start=lang == fetch_model.DEFAULT)
-    d = fetch_model.folder(lang)
+    from . import fetch_model
+    fetch_model.ensure()             # downloaded here, once, if it was never fetched
+    d = config.ASR_MODEL_DIR
     return sherpa_onnx.OfflineRecognizer.from_transducer(
         **_model_files(d),
         tokens=str(d / "tokens.txt"),
@@ -181,41 +142,52 @@ def _new(lang: str = fetch_model.DEFAULT):
     )
 
 
-def _take(lang: str = fetch_model.DEFAULT, wait: bool = True):
-    """A free copy of the language's model: one that is idle, a new one while there is room for more, else wait for
-    one (or, with wait=False, None)."""
-    p = _pool(lang)
+def _take():
+    """A free copy of the model: one that is idle, a new one while there is room for more, else wait for one."""
+    global _made
     try:
-        return p.free.get_nowait()
+        return _free.get_nowait()
     except queue.Empty:
         pass
     with _lock:
-        make = p.made < COPIES
+        make = _made < COPIES
         if make:
-            p.made += 1
+            _made += 1
     if make:
         try:
-            return _new(lang)
+            return _new()
         except Exception:
             with _lock:
-                p.made -= 1
+                _made -= 1
             raise
-    return p.free.get() if wait else None
+    return _free.get()
 
 
-def _take_now(lang: str = fetch_model.DEFAULT):
+def _take_now():
     """A copy of the model if one is free (or can still be made) this instant, else None."""
-    return _take(lang, wait=False)
+    global _made
+    try:
+        return _free.get_nowait()
+    except queue.Empty:
+        pass
+    with _lock:
+        make = _made < COPIES
+        if make:
+            _made += 1
+    if not make:
+        return None
+    try:
+        return _new()
+    except Exception:
+        with _lock:
+            _made -= 1
+        raise
 
 
-def _give_back(rec, lang: str):
-    _pool(lang).free.put(rec)
-
-
-def _recognizer(lang: str = fetch_model.DEFAULT):
+def _recognizer():
     """Kept for callers that only need the model loaded (warm-up)."""
-    rec = _take(lang)
-    _give_back(rec, lang)
+    rec = _take()
+    _free.put(rec)
     return rec
 
 
@@ -243,12 +215,8 @@ BATCH = int(os.environ.get("PEAKCUT_ASR_BATCH", "1"))   # pieces decoded togethe
 # each piece already uses every core, so one at a time (which also keeps the words exactly as before).
 
 
-ARABIC_MARKS = re.compile(r"[ً-ْٰـ]")    # vowel marks and the stretching line (tatweel)
-
-
 def _words(tokens, timestamps, a: int, b: int) -> list:
     out = []
-    tokens = [ARABIC_MARKS.sub("", t) for t in tokens]       # Arabic captions read as people type them: no vowel marks
     off, seg_end = a / 16000.0, b / 16000.0
     cur, gap = None, False
     for tok, t in zip(tokens, timestamps):
@@ -272,10 +240,10 @@ def _words(tokens, timestamps, a: int, b: int) -> list:
     return out
 
 
-def decode_pieces(pieces: list, rec=None, lang: str = fetch_model.DEFAULT) -> list:
+def decode_pieces(pieces: list, rec=None) -> list:
     """[(tokens, timestamps), ...] for float32 pieces of audio, done on this machine with one copy of the model."""
     streams = []
-    rec = rec or _take(lang)       # held only for these pieces, so videos transcribing at once take turns fairly
+    rec = rec or _take()       # held only for these pieces, so videos transcribing at once take turns fairly
     try:
         for seg in pieces:
             st = rec.create_stream()
@@ -283,44 +251,32 @@ def decode_pieces(pieces: list, rec=None, lang: str = fetch_model.DEFAULT) -> li
             streams.append(st)
         rec.decode_streams(streams)
     finally:
-        _give_back(rec, lang)
+        _free.put(rec)
     return [(list(st.result.tokens), [float(t) for t in st.result.timestamps]) for st in streams]
 
 
-class RemoteLacks(Exception):
-    """The card's machine has no model for this language (or is an older one that only knows English)."""
+def _remote_ok() -> bool:
+    return bool(REMOTE) and time.time() >= _remote_down_until
 
 
-def _remote_ok(lang: str = fetch_model.DEFAULT) -> bool:
-    return bool(REMOTE) and time.time() >= max(_remote_down_until, _remote_lacks.get(lang, 0.0))
-
-
-def _decode_remote(pieces: list, lang: str = fetch_model.DEFAULT) -> list:
+def _decode_remote(pieces: list) -> list:
     """The same, on the machine with the graphics card. Audio goes as 16-bit sound, the answer comes back as text."""
     import httpx
     raw = [np.clip(seg * 32768.0, -32768, 32767).astype("<i2") for seg in pieces]
     r = httpx.post(REMOTE + "/decode", content=b"".join(x.tobytes() for x in raw), timeout=httpx.Timeout(120, connect=4),
                    headers={"Authorization": "Bearer " + REMOTE_TOKEN, "X-Lens": ",".join(str(len(x)) for x in raw),
-                            "X-Lang": lang, "Content-Type": "application/octet-stream"})
-    if r.status_code == 409:
-        raise RemoteLacks(lang)
+                            "Content-Type": "application/octet-stream"})
     r.raise_for_status()
-    body = r.json()
-    # An older machine ignores the language and would answer in English: only trust an answer that says which
-    # language it was made in. (English is safe either way: that is what an older machine has.)
-    if body.get("lang", fetch_model.DEFAULT) != lang:
-        raise RemoteLacks(lang)
-    got = body["pieces"]
+    got = r.json()["pieces"]
     if len(got) != len(pieces):
         raise ValueError("wrong number of pieces came back")
     return [(p["tokens"], p["timestamps"]) for p in got]
 
 
-def transcribe(audio: np.ndarray, on_progress=None, lang: str = fetch_model.DEFAULT) -> list:
-    """Returns [{'w': word, 's': start_sec, 'e': end_sec}, ...] for the whole audio, heard as `lang`.
+def transcribe(audio: np.ndarray, on_progress=None) -> list:
+    """Returns [{'w': word, 's': start_sec, 'e': end_sec}, ...] for the whole audio.
     Speech is cut at quiet moments into 12-24 s pieces; silent pieces are skipped."""
     global _remote_down_until
-    lang = lang if fetch_model.known(lang) else fetch_model.DEFAULT
     words = []
     todo = []
     for a, b in _chunks(audio):
@@ -328,7 +284,7 @@ def transcribe(audio: np.ndarray, on_progress=None, lang: str = fetch_model.DEFA
         if len(seg) < 4800 or float(np.sqrt((seg ** 2).mean())) < 0.003:
             continue  # silence: skip, saves time and avoids made-up words
         todo.append((a, b, seg))
-    remote = _remote_ok(lang)
+    remote = _remote_ok()
     size = max(1, REMOTE_BATCH if remote else BATCH)
     groups = [todo[i:i + size] for i in range(0, len(todo), size)]
     done = [0]
@@ -339,26 +295,24 @@ def transcribe(audio: np.ndarray, on_progress=None, lang: str = fetch_model.DEFA
         got = None
         while got is None:
             # whichever is free first: a place on the card's machine, or a copy of the model on this one
-            if remote and _remote_ok(lang) and REMOTE_SLOTS.acquire(blocking=False):
+            if remote and _remote_ok() and REMOTE_SLOTS.acquire(blocking=False):
                 try:
-                    got = _decode_remote(segs, lang)
-                except RemoteLacks:   # no model there for this language: done here for a while, English unaffected
-                    _remote_lacks[lang] = time.time() + 600
+                    got = _decode_remote(segs)
                 except Exception:  # noqa: BLE001 - the card's machine is away or busy: these pieces are done here
                     _remote_down_until = time.time() + 60
                 finally:
                     REMOTE_SLOTS.release()
                 continue
-            rec = _take_now(lang)
-            if rec is None and not (remote and _remote_ok(lang)):
-                rec = _take(lang)                            # nothing else to wait for: wait for a copy here
+            rec = _take_now()
+            if rec is None and not (remote and _remote_ok()):
+                rec = _take()                                # nothing else to wait for: wait for a copy here
             if rec is not None:
                 got = []
                 step = max(1, BATCH)
                 try:
                     for i in range(0, len(segs), step):
-                        got += decode_pieces(segs[i:i + step], rec, lang)
-                        rec = None if i + step >= len(segs) else _take(lang)
+                        got += decode_pieces(segs[i:i + step], rec)
+                        rec = None if i + step >= len(segs) else _take()
                 except Exception:
                     got = None
                     raise

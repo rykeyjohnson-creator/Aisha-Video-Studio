@@ -2,10 +2,8 @@
 
 Public pages:  /  /login  /signup          The app:  /app  (signed-in users only)
 Everything under /api, /media and /oauth needs a session, except /api/auth/* and /api/public."""
-import contextlib
 import hashlib
 import hmac
-import ipaddress
 import json
 import os
 import re
@@ -23,10 +21,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from . import admin as admins
 from . import account, load
-from . import (accounts, ai, alerts, auth, brain, config, creators, ctx, db, jobs, live, media, posting,
-               profiles, render, safe, transcribe, usage)
+from . import (accounts, ai, alerts, auth, campaigns, config, creators, ctx, db, jobs, live, media, posting,
+               platforms, profiles, publish, render, safe, transcribe, usage)
 
 from . import tools as _tools  # noqa: E402
+from .aisha_api import router as aisha_router
 
 
 def _quiet(fn):
@@ -36,9 +35,11 @@ def _quiet(fn):
         print(f"  {e}", flush=True)
 
 
-app = FastAPI(title="PeakCut", docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Aisha Video Studio", docs_url=None, redoc_url=None, openapi_url=None)
+app.include_router(aisha_router)
 WEB = config.ROOT / "web"
-OPEN = ("/api/auth/", "/pub/", "/api/public", "/auth/google/", "/auth/verify", "/brand/", "/assets/", "/healthz", "/favicon.ico", "/robots.txt", "/sitemap.xml")
+AISHA = "/api/aisha/v1/"
+OPEN = ("/api/auth/", "/pub/", "/api/public", "/auth/google/", "/auth/verify", "/brand/", "/assets/", "/healthz", "/favicon.ico", "/robots.txt", "/sitemap.xml", AISHA)
 PAGES = {"/": "landing.html", "/login": "auth.html", "/signup": "auth.html", "/reset": "reset.html",
          "/privacy": "legal.html", "/terms": "legal.html", "/acceptable-use": "legal.html"}
 VIDEO_TYPES = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".ts", ".flv"}
@@ -98,16 +99,17 @@ class Gate:
             await resp(scope, receive, send)
 
         if method not in ("GET", "HEAD", "OPTIONS"):
-            if not _from_here(req):
+            if not path.startswith(AISHA) and not _from_here(req):
                 return await deny(403, "Cross-site requests are not allowed.")
-            # Only the upload may be big. Everything else is a small form, and is cut off at 256 KB whatever its
+            # Only uploads may be big. Everything else is a small form, and is cut off at 256 KB whatever its
             # headers claim, so nobody can fill the server's memory by posting junk (signed in or not).
             piece = method == "PUT" and path.startswith("/api/upload/")
+            aisha_upload = method == "POST" and path == AISHA + "jobs/upload"
             cap = ((min(config.MAX_UPLOAD_MB, config.UPLOAD_PART_MB) if piece else config.MAX_UPLOAD_MB) + 8) * 1024 * 1024 \
-                if path == "/api/upload" or piece else 256 * 1024
+                if path == "/api/upload" or piece or aisha_upload else 256 * 1024
             try:
                 if int(req.headers.get("content-length") or 0) > cap:
-                    return await deny(413, f"That file is too big. The limit is {config.MAX_UPLOAD_MB} MB." if path == "/api/upload" else "That request is too large.")
+                    return await deny(413, f"That file is too big. The limit is {config.MAX_UPLOAD_MB} MB." if path in ("/api/upload", AISHA + "jobs/upload") else "That request is too large.")
             except ValueError:
                 return await deny(400, "Bad request.")
             seen, inner_receive = 0, receive
@@ -250,35 +252,6 @@ def _from_cdn(addr: str) -> bool:
     return any(ip in n for n in _CDN_RANGES)
 
 
-# Private and local addresses: the only places a reverse proxy in front of PeakCut can sit.
-_PROXY_CIDRS = ("127.0.0.0/8", "10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "100.64.0.0/10", "169.254.0.0/16",
-                "::1/128", "fc00::/7", "fe80::/10")
-_PROXY_RANGES = [ipaddress.ip_network(r) for r in _PROXY_CIDRS]
-
-
-def _trust_proxy() -> bool:
-    return (config.env("PEAKCUT_TRUST_PROXY") or "").strip().lower() not in ("", "0", "false", "no")
-
-
-def _valid_ip(text: str) -> str:
-    """The address as text if it really is an IP address, otherwise ""."""
-    try:
-        ip = ipaddress.ip_address(text)
-    except ValueError:
-        return ""
-    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
-        ip = ip.ipv4_mapped
-    return str(ip)
-
-
-def _from_proxy(addr: str) -> bool:
-    clean = _valid_ip(addr)
-    if not clean:
-        return False
-    ip = ipaddress.ip_address(clean)
-    return any(ip in n for n in _PROXY_RANGES)
-
-
 def _ip(request: Request) -> str:
     """The visitor's address, used for rate limits. The connection's own address, or the one the proxy in front
     reports (PEAKCUT_TRUST_PROXY). If that connection comes from the CDN, the CDN's header names the real visitor
@@ -286,15 +259,12 @@ def _ip(request: Request) -> str:
     pick their own address by sending it themselves.
 
     The proxy adds the address it saw at the END of X-Forwarded-For. Everything before that was written by the
-    visitor, so only the last entry is believed, and only when the connection came from a proxy on a private address."""
-    direct = request.client.host if request.client else ""
-    peer = direct
-    fwd = ",".join(request.headers.getlist("x-forwarded-for"))
-    if _trust_proxy() and fwd and _from_proxy(direct):
-        peer = _valid_ip(fwd.rsplit(",", 1)[-1].strip()) or direct
+    visitor, so only the last entry is believed."""
+    fwd = request.headers.get("x-forwarded-for", "")
+    peer = (fwd.split(",")[-1].strip() if fwd and config.env("PEAKCUT_TRUST_PROXY") else "") or (request.client.host if request.client else "")
     named = config.env("PEAKCUT_CLIENT_IP_HEADER")
     if named and request.headers.get(named) and _from_cdn(peer):
-        return _valid_ip(request.headers[named].split(",")[0].strip()[:64]) or peer
+        return request.headers[named].split(",")[0].strip()[:64]
     return peer
 
 
@@ -611,13 +581,7 @@ def status(request: Request):
     return {"user": auth.public(me_), "update": updates.latest() if me_.is_admin else None, "accounts": config.ACCOUNTS, "disk_full": load.disk_full(), "no_ffmpeg": bool(_tools.missing()), "links": {"repo": config.REPO_URL, "follow": config.FOLLOW_URL}, "ai": usage.brief(), "unread": notices.unread(),
             "tour": not accounts.settings()["tour_done"],
             "youtube": accounts.youtube_ready(), "connect": {p: accounts.can_connect(p) for p in accounts.PLATFORM_NAMES}, "max_upload_mb": config.MAX_UPLOAD_MB, "upload_part_mb": config.UPLOAD_PART_MB, "max_batch": config.MAX_ACTIVE_JOBS_PER_USER,
-            "styles": {k: v["label"] for k, v in render.STYLES.items()}, "layouts": render.LAYOUTS, "speech": _speech_brief()}
-
-
-def _speech_brief() -> dict:
-    """Which spoken languages can be transcribed here: for the language choice when adding a video."""
-    from . import fetch_model
-    return {k: {"label": m[0], "size_mb": m[3], "state": fetch_model.status(k)} for k, m in fetch_model.MODELS.items()}
+            "styles": {k: v["label"] for k, v in render.STYLES.items()}, "layouts": render.LAYOUTS}
 
 
 # ================================================================ videos
@@ -765,6 +729,8 @@ def create_from_link(body: dict = Body(...)):
         with _create_lock:
             _job_slots()
             job = jobs.create({"type": "url", "url": url, "name": url}, body.get("options") or {}, creator=creator)
+            job["platform"] = platforms.get(str(body.get("platform") or "vertical")).id
+            jobs.save(job)
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e) if isinstance(e, ValueError) else "Those options aren't valid.")
     seen = media._PREVIEWS.get(url)  # already looked up while the user was typing: show it straight away
@@ -777,7 +743,7 @@ def create_from_link(body: dict = Body(...)):
 
 
 @app.post("/api/upload")
-def create_from_file(file: UploadFile = File(...), options: str = Form("{}"), creator: str = Form("")):
+def create_from_file(file: UploadFile = File(...), options: str = Form("{}"), creator: str = Form(""), platform: str = Form("")):
     _need_verified()
     _job_slots()
     name = re.sub(r"[^\w.\- ]", "_", Path(file.filename or "video.mp4").name)[:120]
@@ -814,6 +780,8 @@ def create_from_file(file: UploadFile = File(...), options: str = Form("{}"), cr
     finally:
         tmp.unlink(missing_ok=True)
     job["source"]["path"] = str(dest)
+    job["platform"] = platforms.get(platform or "vertical").id
+    jobs.save(job)
     jobs.enqueue(job)
     return jobs.public(job)
 
@@ -832,35 +800,13 @@ def _up_root() -> Path:
     return d
 
 
-UP_IDLE_SEC = 15 * 60     # an upload of your own that hasn't moved for this long was left behind (tab closed, page reloaded)
-
-
-def _up_active(d: Path) -> float:
-    """When this upload last moved: its folder, or any piece in it (a piece being sent grows as it arrives)."""
-    newest = d.stat().st_mtime
-    for f in d.iterdir():
-        try:
-            newest = max(newest, f.stat().st_mtime)
-        except OSError:
-            pass
-    return newest
-
-
 def _up_sweep():
-    """Forget uploads that were started and never finished: anyone's after six hours, and the asker's own once
-    they have stood still for UP_IDLE_SEC. An upload cut short by closing the tab or reloading the page never
-    says it stopped, and it must not keep counting against the limit of uploads at once."""
-    me = ctx.uid()
+    """Forget uploads that were started and never finished (after six hours)."""
     for d in _up_root().glob("up-*"):
         try:
-            if not d.is_dir():
-                continue
-            idle = time.time() - _up_active(d)
-            if idle > 6 * 3600:
+            if d.is_dir() and time.time() - d.stat().st_mtime > 6 * 3600:
                 shutil.rmtree(d, ignore_errors=True)
-            elif idle > UP_IDLE_SEC and json.loads((d / "meta.json").read_text(encoding="utf-8")).get("user") == me:
-                shutil.rmtree(d, ignore_errors=True)
-        except (OSError, ValueError):
+        except OSError:
             pass
 
 
@@ -898,6 +844,7 @@ def upload_start(body: dict = Body(...)):
     if creator and not creators.get(creator):
         raise HTTPException(404, "No such creator")
     opts = body.get("options") if isinstance(body.get("options"), dict) else {}
+    selected_platform = platforms.get(str(body.get("platform") or "vertical")).id
     try:
         jobs.clean_options(opts)                 # refused now rather than after the whole file has been sent
     except (ValueError, TypeError):
@@ -916,7 +863,7 @@ def upload_start(body: dict = Body(...)):
     d = _up_root() / f"up-{upid}"
     d.mkdir()
     meta = {"user": ctx.uid(), "name": name, "ext": ext, "size": size, "part": part, "parts": -(-size // part),
-            "options": opts, "creator": creator, "t": time.time()}
+            "options": opts, "creator": creator, "platform": selected_platform, "t": time.time()}
     (d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     return {"id": upid, "part": part, "parts": meta["parts"]}
 
@@ -978,6 +925,8 @@ def upload_finish(upid: str):
         shutil.rmtree(d, ignore_errors=True)
     _disk.pop(ctx.uid(), None)
     job["source"]["path"] = str(dest)
+    job["platform"] = platforms.get(meta.get("platform") or "vertical").id
+    jobs.save(job)
     jobs.enqueue(job)
     return jobs.public(job)
 
@@ -1003,41 +952,6 @@ def rerender(jid: str, cid: str, body: dict = Body(...)):
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e))
     return jobs.public(job)
-
-
-def _clip_or_404(jid: str, cid: str):
-    job = _job_or_404(jid)
-    clip = next((c for c in job["clips"] if c["id"] == cid), None)
-    if not clip:
-        raise HTTPException(404, "No such clip")
-    return job, clip
-
-
-@app.put("/api/jobs/{jid}/clips/{cid}/text")
-def clip_text(jid: str, cid: str, body: dict = Body(...)):
-    """Save a clip's title, description and hashtags. The video is not made again."""
-    job, clip = _clip_or_404(jid, cid)
-    _throttle("cliptext:" + ctx.uid(), 120, 600)
-    try:
-        jobs.save_post_text(job, clip, body)
-    except (ValueError, TypeError) as e:
-        raise HTTPException(400, str(e))
-    return jobs.public(job)
-
-
-@app.post("/api/jobs/{jid}/clips/{cid}/write")
-def clip_write(jid: str, cid: str):
-    """Ask the AI for a new title, description and hashtags for one clip. Returned to the page, not saved."""
-    job, clip = _clip_or_404(jid, cid)
-    _throttle("clipwrite:" + ctx.uid(), 20, 600, "That's a lot of rewrites in a short time. Wait a few minutes.")
-    usage.set_context(job.get("creator"), job.get("title") or "")
-    try:
-        return brain.post_text(jobs.spoken_in(job, clip), job.get("title") or "", job.get("uploader") or "",
-                               game=job.get("game") or None)
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except RuntimeError as e:
-        raise HTTPException(503, str(e))
 
 
 @app.delete("/api/jobs/{jid}")
@@ -1123,17 +1037,10 @@ def delete_my_account(request: Request, body: dict = Body(...)):
 def media_file(jid: str, name: str, download: int = 0):
     if not re.fullmatch(r"[\w\-]+\.(mp4|jpg)", name):
         raise HTTPException(404)
-    job = _job_or_404(jid)
-    f = Path(job["dir"]) / "clips" / name
+    f = Path(_job_or_404(jid)["dir"]) / "clips" / name
     if not f.is_file():
         raise HTTPException(404)
-    save_as = name
-    if download and name.endswith(".mp4"):
-        # a clip is saved under its title, not "clip01.mp4", the same as when several are downloaded as a zip
-        clip = next((c for c in job.get("clips", []) if Path(str(c.get("file") or "")).name == name), None)
-        if clip:
-            save_as = account.clip_title_name(clip, Path(name).stem) + ".mp4"
-    return FileResponse(f, filename=save_as if download else None, headers={"Cache-Control": "private, max-age=300"})
+    return FileResponse(f, filename=name if download else None, headers={"Cache-Control": "private, max-age=300"})
 
 
 # ================================================================ creators and live recording
@@ -1405,51 +1312,58 @@ def ai_test(request: Request):
         raise HTTPException(502, ai.explain(e) or "The AI did not answer: " + _ai_error(e))
 
 
-# ---------------------------------------------------------------- speech models, one per spoken language
-# Only the owner (or an admin, when accounts are on) can download or delete them: they are shared by everyone here.
-def _speech_lang(lang: str) -> str:
-    from . import fetch_model
-    if not fetch_model.known(lang):
-        raise HTTPException(400, "PeakCut has no speech model for that language.")
-    return lang
-
-
-@app.get("/api/speech")
-def speech_list(request: Request):
-    _admin(request)
-    from . import fetch_model
-    return {"models": [{"lang": k, "label": m[0], "size_mb": m[3], "credit": m[4], "state": fetch_model.status(k),
-                        "percent": fetch_model.state[k]["percent"], "error": fetch_model.state[k]["error"],
-                        "default": k == fetch_model.DEFAULT} for k, m in fetch_model.MODELS.items()]}
-
-
-@app.post("/api/speech/{lang}")
-def speech_download(request: Request, lang: str):
-    _admin(request)
-    from . import fetch_model
-    fetch_model.start(_speech_lang(lang))
-    ctx.bump()
-    return speech_list(request)
-
-
-@app.delete("/api/speech/{lang}")
-def speech_remove(request: Request, lang: str):
-    _admin(request)
-    from . import fetch_model
-    try:
-        fetch_model.remove(_speech_lang(lang))
-    except ValueError as e:
-        raise HTTPException(400, str(e))
-    except RuntimeError as e:
-        raise HTTPException(409, str(e))
-    ctx.bump()
-    return speech_list(request)
-
-
 # ================================================================ posting, accounts, settings
 @app.get("/api/overview")
 def overview():
     return posting.overview()
+
+
+@app.get("/api/platforms")
+def list_platforms():
+    return platforms.all_public()
+
+
+@app.get("/api/campaigns")
+def list_campaigns():
+    return campaigns.all_campaigns()
+
+
+@app.post("/api/campaigns")
+def new_campaign(body: dict = Body(...)):
+    try:
+        return campaigns.create(body)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/campaigns/{cid}")
+def edit_campaign(cid: str, body: dict = Body(...)):
+    try:
+        return campaigns.update(cid, body)
+    except KeyError:
+        raise HTTPException(404, "No such campaign")
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/campaigns/{cid}")
+def delete_campaign(cid: str):
+    if not campaigns.delete(cid):
+        raise HTTPException(404, "No such campaign")
+    return {"ok": True}
+
+
+@app.get("/api/schedules")
+def list_schedules():
+    return posting.schedules()
+
+
+@app.post("/api/schedules/{pid}/reschedule")
+def reschedule_post(pid: str, body: dict = Body(...)):
+    try:
+        return posting.reschedule(pid, float(body.get("due_at")))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e) or "Choose a valid time.")
 
 
 @app.get("/api/settings")
@@ -1594,32 +1508,25 @@ def apps_put(request: Request, body: dict = Body(...)):
         raise HTTPException(400, str(e))
 
 
-# ---------------------------------------------------------------- YouTube cookies, for servers YouTube refuses
-# A secret like a password: it is saved to a file only this server reads, and never sent back to the page.
-@app.get("/api/youtube-cookies")
-def yt_cookies_get(request: Request):
-    _admin(request)
-    f = config.YT_COOKIES
-    return {"saved": f.is_file(), "updated": int(f.stat().st_mtime) if f.is_file() else 0}
+@app.get("/api/publish/{jid}")
+def publish_manifest(jid: str):
+    job = _job_or_404(jid)
+    if not publish.done_clips(job):
+        raise HTTPException(409, "No finished clips yet.")
+    return publish.manifest(job, platforms.get(job.get("platform") or "vertical"), base_url=config.PUBLIC_URL)
 
 
-@app.put("/api/youtube-cookies")
-def yt_cookies_put(request: Request, body: dict = Body(...)):
-    _admin(request)
-    f, text = config.YT_COOKIES, str(body.get("text") or "")
-    if body.get("remove"):
-        f.unlink(missing_ok=True)
-    else:
-        rows = [l.split("\t") for l in text.splitlines() if l.strip() and not l.startswith("# ")]
-        if len(text) > 1_000_000 or not any(len(r) == 7 and "youtube.com" in r[0] for r in rows):
-            raise HTTPException(400, "That doesn't look like a cookies.txt file with YouTube cookies in it. Export it "
-                                     "from a browser signed in to YouTube, with an extension such as \"Get cookies.txt LOCALLY\".")
-        text = text if text.startswith("# Netscape") else "# Netscape HTTP Cookie File\n" + text
-        f.write_text(text, encoding="utf-8")
-        with contextlib.suppress(OSError):
-            f.chmod(0o600)
-    media._yt_refused_until = 0.0        # try YouTube again straight away
-    return yt_cookies_get(request)
+@app.get("/api/publish/{jid}/bundle")
+def publish_bundle(jid: str):
+    job = _job_or_404(jid)
+    try:
+        f = publish.build_bundle(job, platforms.get(job.get("platform") or "vertical"))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    from starlette.background import BackgroundTask
+    return FileResponse(f, filename=f"aisha-video-studio-kit-{jid}.zip", media_type="application/zip",
+                        headers={"Cache-Control": "private, no-store"},
+                        background=BackgroundTask(lambda: f.unlink(missing_ok=True)))
 
 
 @app.post("/api/posts")
@@ -1722,10 +1629,10 @@ def main():
         # restart by itself whenever the server code changes (pages in web/ never need a restart)
         uvicorn.run("studio.server:app", host=config.HOST, port=config.PORT, log_level="warning", backlog=4096, reload=True,
                     reload_dirs=[str(config.ROOT / "studio")], reload_includes=["*.py"],
-                    proxy_headers=_trust_proxy(), forwarded_allow_ips=list(_PROXY_CIDRS))
+                    proxy_headers=bool(config.env("PEAKCUT_TRUST_PROXY")), forwarded_allow_ips="*")
         return
     uvicorn.run(app, host=config.HOST, port=config.PORT, log_level="warning", backlog=4096,
-                proxy_headers=_trust_proxy(), forwarded_allow_ips=list(_PROXY_CIDRS))
+                proxy_headers=bool(config.env("PEAKCUT_TRUST_PROXY")), forwarded_allow_ips="*")
 
 
 if __name__ == "__main__":

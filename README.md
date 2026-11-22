@@ -1,10 +1,15 @@
-# PeakCut
+# Aisha Video Studio
 
-Turn long videos and live streams into captioned vertical clips, ready to post. Free and open source: run it on
-your own computer or server, with your own AI key.
+This is the Aisha fork of [PeakCut](https://github.com/haziqahmedqasmi/PeakCut), with platform presets and a
+publish-kit API adapted from [AutoClip](https://github.com/zhouxiaoka/autoclip). See [AISHA.md](AISHA.md) for the
+automation API and [NOTICE.md](NOTICE.md) for attribution.
 
-Paste a YouTube, Twitch or Kick link (or upload a file) and PeakCut finds the moments worth clipping, cuts them to
-9:16, adds word-by-word captions and a hook, and can post them to your connected accounts. It can also record a
+Turn long videos and live streams into captioned clips, ready to post. Free and open source: run it on your own
+computer or server, with your own AI key.
+
+Paste a YouTube, Twitch or Kick link (or upload a file) and Aisha Video Studio finds the moments worth clipping,
+cuts them to the selected platform shape, adds word-by-word captions and a hook, and can post them to your
+connected accounts. It can also record a
 creator's live stream and clip the highlights while the stream is still running.
 
 ## What it does
@@ -14,8 +19,13 @@ creator's live stream and clip the highlights while the stream is still running.
 - **Live clipping.** Records a stream into a rolling buffer and clips as it happens, using loudness, chat activity
   and the transcript.
 - **Workspaces per creator.** Channels, clip settings, posting rules and an activity log for each creator you clip.
-- **Posting.** Connect YouTube, Instagram and TikTok in one click, then queue or auto-post finished clips, with
-  spacing and daily caps (see [DEPLOY.md](DEPLOY.md#connecting-youtube-instagram-and-tiktok) for the one-time setup).
+- **Platform presets.** Vertical 9:16 for TikTok, Reels and Shorts, square for feed posts, landscape 16:9 for X,
+  and custom output sizes from 240px to 2160px.
+- **Campaigns and schedules.** Group clips for a sponsor or launch, then move queued posts to a new time.
+- **Posting and publish kits.** Connect YouTube, Instagram and TikTok in one click, then queue or auto-post finished
+  clips. Facebook Reels and X get a ZIP with the clips, covers, captions and post text.
+- **Dedicated pages.** Dashboard, Create Clips, All Videos, Creators, Platforms, Campaigns, Schedules, Publishing
+  and AI Settings, with profile, security and storage under the account menu.
 - **No sign-in on your own computer.** It opens straight into the dashboard. On a shared server, switch accounts on
   (`PEAKCUT_ACCOUNTS=1`) for email or Google sign-in and an admin dashboard.
 - **Your own AI.** Gemini, OpenAI, Grok, Groq, OpenRouter, Claude, a local model through Ollama, or anything that
@@ -98,14 +108,6 @@ PEAKCUT_AI_KEY=your-key-here
   tokens each video took.
 - Speech to text does not use the AI service. It runs on your own machine, so audio never leaves it.
 
-### Videos in Arabic
-
-PeakCut hears English by default. To clip videos in Arabic, add the Arabic speech model once in
-**Settings → Speech models** (about 107 MB), or choose **Arabic** under Options when adding a video and PeakCut
-offers to download it. Set a creator's language on their Setup page so their live recordings use it too.
-It understands Modern Standard Arabic and everyday dialects, and the AI turns English words said in between
-back into English. Captions on the clips are in English.
-
 ## Settings
 
 Everything is set through environment variables, normally in a `.env` file next to this README.
@@ -143,9 +145,7 @@ python -m studio.admin grant you@example.com
 | `tests/` | Tests that run against a throwaway copy of the app |
 | `deploy/`, `Dockerfile`, `docker-compose.yml` | One-server deployment with PostgreSQL and automatic HTTPS |
 
-Video work is done with `ffmpeg` and `yt-dlp`. Speech is transcribed with `sherpa-onnx` and NVIDIA's Parakeet
-model (English) and FastConformer Arabic model, both released by NVIDIA under the Creative Commons Attribution 4.0
-licence (CC-BY-4.0). The Arabic model was converted for sherpa-onnx with `tools/export_arabic_model.py`.
+Video work is done with `ffmpeg` and `yt-dlp`. Speech is transcribed with `sherpa-onnx` and the Parakeet model.
 Data is kept per user: accounts in the database (SQLite on your own computer, PostgreSQL on a server), videos and
 clips in each user's own folder. [AGENTS.md](AGENTS.md) is a short map of the code for contributors and AI coding
 assistants.

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>PeakCut Admin</title>
+<title>Aisha Video Studio Admin</title>
 <link rel="icon" type="image/svg+xml" href="/brand/favicon.svg">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -164,7 +164,7 @@ dialog::backdrop{background:rgba(14,12,11,.42)}
 <body>
 <div class="app">
   <aside class="side" aria-label="Sidebar">
-    <div class="side-head"><img class="logo" src="/brand/logo-light.svg" alt="PeakCut"></div>
+    <div class="side-head"><img class="logo" src="/brand/logo-light.svg" alt="Aisha Video Studio"></div>
     <nav class="nav" id="nav" aria-label="Admin"></nav>
     <div class="side-foot" id="foot"></div>
   </aside>
@@ -216,7 +216,7 @@ function toast(msg, kind = "") {
 }
 
 const S = {tab:"overview", data:null, me:null, q:"", filter:"all", sort:"created_at", fb:null, fbStatus:"new"};
-const TABS = {overview:["Overview", "home", "Sign-ups, videos and AI use across this PeakCut server."],
+const TABS = {overview:["Overview", "home", "Sign-ups, videos and AI use across this Aisha Video Studio server."],
               users:["Users", "users", "Every account. Open one to see how much it uses the AI."],
               feedback:["Feedback", "chat", "Bug reports, feature ideas and other messages from users."],
               activity:["Activity", "clock", "Everything admins have done, newest first."]};
@@ -270,7 +270,7 @@ function drawOverview(a) {
       <div class="card"><div class="card-head"><div><h2>What the AI is used for</h2><p class="sub">All users, all time</p></div></div>${hbars(a.by_purpose, r => `${num(r[1])} call${r[1] === 1 ? "" : "s"} · ${kfmt(r[2])} tokens`)}</div>
     </div>
     <div class="card"><div class="card-head"><div><h2>Right now</h2><p class="sub">${num(t.recording)} recording, ${num(t.working)} video${t.working === 1 ? "" : "s"} in progress</p></div>
-      <div class="row">${ok(sv.ai_key, ai)}${ok(sv.speech_model, "Transcription")}${Object.entries(sv.speech_more || {}).map(([n, y]) => y ? ok(true, n + " speech") : `<span class="pill">${esc(n)} speech: not added</span>`).join("")}${ok(sv.google, "Google sign-in")}${ok(sv.mail, "Email")}<span class="pill">${esc(sv.database)}</span><span class="pill">${esc(sv.free_gb)} GB free</span>${sv.load ? `<span class="pill ${sv.load.busy ? "warn" : "ok"}">${sv.load.busy ? "Near full: new videos are queueing" : "Has room"}</span><span class="pill">Processor ${esc(sv.load.cpu)}%</span><span class="pill">${esc(sv.load.ram_free_gb)} GB memory free</span><span class="pill">${esc(sv.running)} running, ${esc(sv.waiting)} waiting</span>` : ""}</div>
+      <div class="row">${ok(sv.ai_key, ai)}${ok(sv.speech_model, "Transcription")}${ok(sv.google, "Google sign-in")}${ok(sv.mail, "Email")}<span class="pill">${esc(sv.database)}</span><span class="pill">${esc(sv.free_gb)} GB free</span>${sv.load ? `<span class="pill ${sv.load.busy ? "warn" : "ok"}">${sv.load.busy ? "Near full: new videos are queueing" : "Has room"}</span><span class="pill">Processor ${esc(sv.load.cpu)}%</span><span class="pill">${esc(sv.load.ram_free_gb)} GB memory free</span><span class="pill">${esc(sv.running)} running, ${esc(sv.waiting)} waiting</span>` : ""}</div>
       ${sv.ai_key ? "" : `<p class="note" style="margin-top:14px">No AI key is set, so clips are picked by loudness only. Add your own key to the .env file on the server (see .env.example) and restart.</p>`}</div>`;
 }
 
@@ -321,7 +321,7 @@ function drawFeedback() {
       <p class="fbmsg">${esc(x.message)}</p>${x.context ? `<p class="fbctx">${esc(x.context)}</p>` : ""}
       <div class="row">${x.status !== "seen" ? `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="seen">Mark seen</button>` : ""}
         ${x.status !== "done" ? `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="done">${ic("check")}Done</button>` : `<button class="btn sm" data-act="fbset" data-id="${x.id}" data-s="new">Reopen</button>`}
-        ${x.email ? `<a class="btn sm" href="mailto:${esc(x.email)}?subject=${encodeURIComponent("About your PeakCut feedback")}">Reply by email</a>` : ""}</div></div>`).join("")
+        ${x.email ? `<a class="btn sm" href="mailto:${esc(x.email)}?subject=${encodeURIComponent("About your Aisha Video Studio feedback")}">Reply by email</a>` : ""}</div></div>`).join("")
       : `<div class="card"><div class="empty"><b>Nothing here</b>${S.fbStatus === "new" ? "No new messages. Everything has been looked at." : "Messages appear here as users send them."}</div></div>`}`;
 }
 async function loadFeedback() {

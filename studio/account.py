@@ -75,13 +75,6 @@ def delete_many(job_ids: list, clip_ids: list) -> dict:
     return out
 
 
-def clip_title_name(clip: dict, fallback: str = "clip") -> str:
-    """The file name a downloaded clip should have, without the extension: its title, or its hook, made safe to save.
-    A clip with neither keeps `fallback` (its id), so a name is never empty."""
-    text = clip.get("title") or clip.get("hook") or fallback
-    return "".join(ch if ch.isalnum() or ch in " -_" else "" for ch in text)[:60].strip() or fallback
-
-
 def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
     """One .zip of finished clips, for downloading many at once. Clips are already compressed, so they are only
     stored, not squeezed again: making the file is as fast as copying."""
@@ -97,7 +90,7 @@ def zip_clips(clip_ids: list, limit_gb: float = 4.0) -> Path:
         total += f.stat().st_size
         if total > limit_gb * 1e9:
             raise ValueError(f"That is more than {limit_gb:g} GB of clips. Download them in smaller groups.")
-        base = clip_title_name(clip, cid)
+        base = "".join(ch if ch.isalnum() or ch in " -_" else "" for ch in (clip.get("title") or clip.get("hook") or cid))[:60].strip() or cid
         name, n = f"{base}.mp4", 2
         while name.lower() in seen:
             name, n = f"{base} ({n}).mp4", n + 1
@@ -167,7 +160,8 @@ def delete_account(uid: str) -> dict:
         accounts._settings_mem.pop(uid, None)
     except Exception:  # noqa: BLE001
         pass
-    from . import posting
+    from . import campaigns, posting
+    campaigns.forget(uid)
     posting.forget(uid)                            # scheduled posts must not outlive the account that owns them
     usage.forget(uid)
     shutil.rmtree(config.user_dir(uid), ignore_errors=True)
