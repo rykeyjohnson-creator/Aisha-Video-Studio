@@ -20,7 +20,9 @@ are there, and only then offer to delete the old folder. Never delete anything w
 ## Run and test
 
 - Run: `./run-aisha.sh` (or `python -m studio.server`). Settings come from `.env`; see `.env.example`. Needs Python 3.10+ and `ffmpeg`.
-- The speech model (about 480 MB) downloads by itself on first start; `python -m studio.fetch_model` gets it ahead of time.
+- The English speech model (about 480 MB) downloads by itself on first start; `python -m studio.fetch_model` gets it
+  ahead of time. Other spoken languages (Arabic, about 107 MB) download only when asked for, in Settings → Speech
+  models or with `python -m studio.fetch_model ar`.
 - Tests: `python tests/run.py`. It starts a throwaway copy on a spare port with an empty data folder. Run it
   before and after any change to `studio/`. No keys needed. `tests/test_aisha_api.py` covers the automation API
   and publish kits without network or rendering.
@@ -41,7 +43,9 @@ are there, and only then offer to delete the old folder. Never delete anything w
 | `studio/publish.py` | Publish-kit JSON and ZIP packaging |
 | `studio/aisha_api.py` | Token-protected `/api/aisha/v1` automation endpoints |
 | `studio/live.py` | Live recording and clipping |
-| `studio/transcribe.py`, `studio/asr_worker.py` | Speech to text, here or on a second machine |
+| `studio/transcribe.py`, `studio/asr_worker.py` | Speech to text, here or on a second machine, one model per spoken language |
+| `studio/fetch_model.py` | The speech models (`MODELS`: one row per spoken language) and downloading them |
+| `tools/export_arabic_model.py` | How the Arabic model was converted for sherpa-onnx (run once, on Google Colab) |
 | `studio/render.py` | Cutting, layouts and captions (ffmpeg and Pillow) |
 | `studio/media.py` | Downloading (yt-dlp), probing, audio |
 | `studio/auth.py`, `studio/account.py`, `studio/admin.py` | Sign-in, deleting things, the admin dashboard |
@@ -59,6 +63,9 @@ are there, and only then offer to delete the old folder. Never delete anything w
 - **Text from videos is untrusted**: it goes into prompts through `brain._safe` and out through `brain._text`.
 - **Adding an AI provider**: add a row to `PROVIDERS` in `studio/ai.py`. If it speaks the OpenAI chat format that
   is all; otherwise add one function that returns `(parsed JSON, tokens in, tokens out)`.
+- **Adding a spoken language**: add a row to `MODELS` in `studio/fetch_model.py`. Any NVIDIA NeMo transducer model
+  exported for sherpa-onnx works; its word pieces must mark word starts with `▁`. The language a video is in comes
+  from `options["lang"]` (or a creator's `lang`) and is passed to `transcribe.transcribe(..., lang=...)`.
 - **Clips are rendered in a short temporary folder** and moved into place (`render.render_clip`): ffmpeg's caption
   step cannot open paths longer than 260 characters on Windows.
 - **Secrets** are read from the environment or from files named by `*_FILE` settings. Never write a key, a real

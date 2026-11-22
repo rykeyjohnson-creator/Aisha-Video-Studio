@@ -124,9 +124,22 @@ FONTS_DIR = DATA_DIR / "fonts"          # caption fonts, copied from studio/font
 # YouTube already has a word-by-word transcript of most videos. With this on, that is what the AI reads to find the
 # clips (seconds instead of transcribing hours), and our own model is run only on the clips themselves.
 YT_TRANSCRIPT = env("PEAKCUT_YT_TRANSCRIPT", "1") != "0"
+# YouTube often refuses servers in data centres ("sign in to confirm you're not a bot"). Cookies from a signed-in
+# YouTube account get past that: an admin pastes them under Settings, Connected apps, and they are kept in this file.
+YT_COOKIES = Path(env("PEAKCUT_YT_COOKIES") or DATA_DIR / "youtube-cookies.txt")
 # the compact model for processors; a machine with a graphics card sets PEAKCUT_ASR_MODEL to the full-precision one
 ASR_MODEL_NAME = env("PEAKCUT_ASR_MODEL", "sherpa-onnx-nemo-parakeet-tdt-0.6b-v2-int8")
 ASR_MODEL_DIR = MODELS_DIR / ASR_MODEL_NAME
+# Arabic: NVIDIA's FastConformer, converted for PeakCut with tools/export_arabic_model.py. Downloaded only when asked for.
+ASR_MODEL_AR = env("PEAKCUT_ASR_MODEL_AR", "sherpa-onnx-nemo-fastconformer-ar-int8")
+# The address names one fixed version of the file (a commit), not "the latest", and the file's fingerprint (SHA-256)
+# is checked before it is unpacked, so what is downloaded can't change unless this code changes. A mirror set with
+# PEAKCUT_ASR_MODEL_AR_URL must hold the very same file; a different model needs its own PEAKCUT_ASR_MODEL_AR_SHA256.
+ASR_MODEL_AR_URL = env("PEAKCUT_ASR_MODEL_AR_URL") or (
+    "https://huggingface.co/madwezza/peakcut-arabic-speech/resolve/"
+    f"3ae1fba562d68ce5299ea32659e5973cf464e034/{ASR_MODEL_AR}.tar.bz2")
+ASR_MODEL_AR_SHA256 = (env("PEAKCUT_ASR_MODEL_AR_SHA256")
+                       or "033ac7d886b3a4f04f66f3b8959456d7f4aa28ad4dae9da96a9cc716448efff9").strip().lower()
 DATABASE_URL = env("DATABASE_URL") or f"sqlite:///{(DATA_DIR / 'peakcut.db').as_posix()}"
 # Commercials and "be right back" screens are stitched into streams. A clip taken from one is worthless, so those
 # seconds can be found and left out. It is off by default: it reads the whole video once, which is not free, and
