@@ -8,6 +8,7 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700&family=Inter:wght@300&family=Archivo+Black&family=Anton&family=Poppins:wght@800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/assets/aisha-splash.css">
 <style>
 :root{
   --brand:#FF8B33;--brand-press:#F27A1F;--brand-ink:#2A1A12;--brand-soft:#FFF2E8;--brand-line:#FFD9BC;--brand-deep:#A9480A;
@@ -840,6 +841,23 @@ dialog[open]{animation:fadein .16s ease}
 </style>
 </head>
 <body>
+<div id="aishaSplash" aria-hidden="true">
+  <span class="as-glow as-glow-a"></span><span class="as-glow as-glow-b"></span>
+  <div class="as-inner">
+    <div class="as-mark"><img src="/brand/favicon.svg" alt=""></div>
+    <div class="as-word" aria-label="Aisha"><span style="--i:0">A</span><span style="--i:1">I</span><span style="--i:2">S</span><span style="--i:3">H</span><span style="--i:4">A</span></div>
+    <div class="as-sub">VIDEO STUDIO</div>
+    <div class="as-rule"><i></i></div>
+  </div>
+</div>
+<script>
+try {
+  if (sessionStorage.getItem("aisha-video-studio-splash-v1")) document.getElementById("aishaSplash")?.remove();
+  else sessionStorage.setItem("aisha-video-studio-splash-v1", "1");
+} catch {}
+setTimeout(() => document.getElementById("aishaSplash")?.remove(), 2400);
+</script>
+
 <div class="app" id="app">
   <aside class="side" aria-label="Sidebar">
     <div class="side-head"><img class="logo" src="/brand/logo-light.svg" alt="Aisha Video Studio"><img class="mark" src="/brand/favicon.svg" alt="Aisha Video Studio">

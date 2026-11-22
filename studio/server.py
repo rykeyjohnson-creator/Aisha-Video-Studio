@@ -462,9 +462,10 @@ def brand(name: str):
 
 @app.get("/assets/{name}")
 def asset(name: str):
-    if not re.fullmatch(r"[\w\-]+\.js", name) or not (WEB / name).is_file():
+    if not re.fullmatch(r"[\w\-]+\.(js|css)", name) or not (WEB / name).is_file():
         raise HTTPException(404)
-    return FileResponse(WEB / name, media_type="text/javascript", headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"})
+    kind = "text/css" if name.endswith(".css") else "text/javascript"
+    return FileResponse(WEB / name, media_type=kind, headers={"Cache-Control": "public, max-age=86400, stale-while-revalidate=604800"})
 
 
 @app.get("/favicon.ico")
