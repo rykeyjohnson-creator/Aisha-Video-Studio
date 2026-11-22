@@ -50,6 +50,11 @@ jobs.start = lambda: None
 jobs.enqueue = lambda job: None
 
 with TestClient(server.app, base_url="http://testserver") as c:
+    app_html = c.get("/app").text
+    check("the studio opens with the animated Aisha splash", 'id="aishaSplash"' in app_html, True)
+    splash_css = c.get("/assets/aisha-splash.css")
+    check("the splash stylesheet is served as CSS", (splash_css.status_code, splash_css.headers.get("content-type", "").split(";")[0]), (200, "text/css"))
+    check("the splash respects reduced motion", "prefers-reduced-motion" in splash_css.text, True)
     check("no token is rejected", c.get("/api/aisha/v1/manifest").status_code, 401)
     check("bad token is rejected", c.get("/api/aisha/v1/manifest", headers={"X-Aisha-Token": "wrong-token-000000"}).status_code, 401)
     r = c.get("/api/aisha/v1/manifest", headers=T)

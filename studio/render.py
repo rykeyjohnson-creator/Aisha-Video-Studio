@@ -79,7 +79,10 @@ def install_fonts():
 
 
 LAYOUTS = {"blur": "Full frame + blurred fill", "zoom": "Zoomed in + blurred fill", "crop": "Fill the screen (centre crop)",
+           "left": "Fill the screen, keep the left side", "right": "Fill the screen, keep the right side",
+           "fit": "Full frame on black", "split": "Split screen: left half on top, right half below (two people)",
            "gameplay": "Gameplay fills the screen, facecam in the corner"}
+_FILLS = ("crop", "left", "right", "gameplay")      # layouts where the picture covers the whole frame
 
 
 def _ts(t):
@@ -113,15 +116,19 @@ def geometry(src_w, src_h, layout, w=W, h=H):
     """Where the video sits in the output frame, and where hook and captions go."""
     if src_h >= src_w and layout != "crop":
         layout = "crop"  # already vertical or square: nothing to gain from a blurred fill
-    if layout == "blur":
+    if layout not in LAYOUTS:
+        layout = "blur"
+    if layout in ("blur", "fit"):
         fg_h = min(h, int(round(w * src_h / src_w / 2)) * 2)
     elif layout == "zoom":
         fg_h = int(h * 1000 / 1920)
     else:
         fg_h = h
     top = (h - fg_h) // 2
-    if layout in ("crop", "gameplay"):
+    if layout in _FILLS:
         return layout, fg_h, int(h * 300 / 1920), int(h * 1380 / 1920)
+    if layout == "split":
+        return layout, fg_h, int(h * 230 / 1920), h // 2        # captions sit on the line between the two people
     return layout, fg_h, max(int(h * 230 / 1920), top - int(h * 190 / 1920)), min(int(h * 1640 / 1920), top + fg_h + int(h * 180 / 1920))
 
 
@@ -252,8 +259,19 @@ def _filter(layout, fg_h, facecam=None, w=W, h=H):
                     f"[base]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1[b];"
                     f"[fc]crop={fw}:{fh}:{fx}:{fy},scale={pip_w}:{pip_h},setsar=1[p];"
                     f"[b][p]overlay={w - pip_w - pip_margin}:{pip_margin}[v0];")
-    if layout == "crop" or (layout == "gameplay" and not facecam):
-        return f"[0:v]fps={config.OUT_FPS},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1[v0];"
+    fill = f"[0:v]fps={config.OUT_FPS},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h}"
+    if layout in ("crop", "left", "right") or (layout == "gameplay" and not facecam):
+        if layout == "left":
+            return fill + ":0:0,setsar=1[v0];"
+        if layout == "right":
+            return fill + ":in_w-out_w:0,setsar=1[v0];"
+        return fill + ",setsar=1[v0];"
+    if layout == "fit":
+        return f"[0:v]fps={config.OUT_FPS},scale={w}:{fg_h},pad={w}:{h}:0:(oh-ih)/2:black,setsar=1[v0];"
+    if layout == "split":
+        half = f"scale={w}:{h // 2}:force_original_aspect_ratio=increase,crop={w}:{h // 2}"
+        return (f"[0:v]fps={config.OUT_FPS},split=2[l][r];[l]crop=iw/2:ih:0:0,{half}[t];"
+                f"[r]crop=iw/2:ih:iw/2:0,{half}[u];[t][u]vstack,setsar=1[v0];")
     bw, bh = max(2, int(w * 0.25)), max(2, int(h * 0.25))
     oy = max(0, (h - fg_h) // 2)
     return (f"[0:v]fps={config.OUT_FPS},split=2[a][b];"
@@ -295,12 +313,16 @@ def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, sr
     # break the filter syntax).
     work = Path(tempfile.mkdtemp(prefix="pk"))
     try:
-        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, face=face, out_w=out_w, out_h=out_h)
+        # The title and description are also written into the file itself, for any place that reads them from it.
+        meta = {"title": clip.get("title") or "", "description": clip.get("description") or "", "comment": clip.get("description") or ""}
+        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, face=face, meta=meta,
+                          out_w=out_w, out_h=out_h)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str, face=None, out_w: int = W, out_h: int = H) -> dict:
+def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str, face=None,
+               meta=None, out_w: int = W, out_h: int = H) -> dict:
     global _qsv_ok
     (work / f"{name}.ass").write_text(ass, encoding="utf-8")
     (work / "f").mkdir()
@@ -309,7 +331,11 @@ def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layo
     fc = _filter(layout, fg_h, face, out_w, out_h) + f"[v0]ass={name}.ass:fontsdir=f[v]"
     base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src),
             "-filter_complex", fc, "-map", "[v]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
-            "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", "-pix_fmt"]
+            "-c:a", "aac", "-b:a", "160k", "-ar", "48000"]
+    for k, v in (meta or {}).items():
+        if v:
+            base += ["-metadata", f"{k}={v}"]
+    base += ["-movflags", "+faststart", "-pix_fmt"]
     encoders = []
     if _qsv_ok is not False:
         encoders.append(("qsv", ["nv12", "-c:v", "h264_qsv", "-global_quality", "23", "-preset", "fast"]))

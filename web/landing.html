@@ -26,6 +26,7 @@
 <link href="https://fonts.googleapis.com/css2?family=Geist:wght@400;500;600;700;800&family=Inter:wght@300&display=swap" rel="stylesheet">
 <script>document.documentElement.classList.add("js")</script>
 <script src="/assets/gradient-ascii.js" defer></script>
+<link rel="stylesheet" href="/assets/aisha-splash.css">
 <style>
 :root{--brand:#FF8B33;--brand-hi:#FF9A4C;--ink:#2A1A12;--soft:#FFF2E8;--line-b:#FFD9BC;--deep:#A9480A;
   --frame:#1E1612;--frame-2:#2C221D;--frame-text:#F4EEEA;--frame-dim:#A99A91;
@@ -274,6 +275,23 @@ details p{color:var(--dim);margin-top:12px;font-size:16px}
 </style>
 </head>
 <body>
+<div id="aishaSplash" aria-hidden="true">
+  <span class="as-glow as-glow-a"></span><span class="as-glow as-glow-b"></span>
+  <div class="as-inner">
+    <div class="as-mark"><img src="/brand/favicon.svg" alt=""></div>
+    <div class="as-word" aria-label="Aisha"><span style="--i:0">A</span><span style="--i:1">I</span><span style="--i:2">S</span><span style="--i:3">H</span><span style="--i:4">A</span></div>
+    <div class="as-sub">VIDEO STUDIO</div>
+    <div class="as-rule"><i></i></div>
+  </div>
+</div>
+<script>
+try {
+  if (sessionStorage.getItem("aisha-video-studio-splash-v1")) document.getElementById("aishaSplash")?.remove();
+  else sessionStorage.setItem("aisha-video-studio-splash-v1", "1");
+} catch {}
+setTimeout(() => document.getElementById("aishaSplash")?.remove(), 2400);
+</script>
+
 <header class="nav" id="nav"><div class="wrap">
   <a href="/" aria-label="Aisha Video Studio home"><img src="/brand/logo.svg" alt="Aisha Video Studio"></a>
   <nav aria-label="Sections"><a href="#how">How it works</a><a href="#features">Features</a><a href="#open">Open source</a><a href="#for">Who it's for</a><a href="#faq">FAQ</a></nav>
