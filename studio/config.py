@@ -202,6 +202,23 @@ def ai_key() -> str:
     return _secret("PEAKCUT_AI_KEY", "PEAKCUT_AI_KEY_FILE", r"\S{8,}")
 
 
+def aisha_token() -> str:
+    """Token for the automation API. PEAKCUT_AISHA_TOKEN wins; otherwise data/aisha_token."""
+    token = _secret("PEAKCUT_AISHA_TOKEN", "PEAKCUT_AISHA_TOKEN_FILE", r"\S{16,}")
+    if token:
+        return token
+    f = DATA_DIR / "aisha_token"
+    try:
+        return f.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
+def aisha_user() -> str:
+    """User that automation jobs belong to when accounts are on. Empty means the local owner."""
+    return env("PEAKCUT_AISHA_USER", "").strip()
+
+
 def ai_ready() -> bool:
     from . import ai
     return ai.ready()

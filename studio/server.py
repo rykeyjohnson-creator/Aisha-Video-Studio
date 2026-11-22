@@ -21,10 +21,11 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, Redirect
 
 from . import admin as admins
 from . import account, load
-from . import (accounts, ai, alerts, auth, config, creators, ctx, db, jobs, live, media, posting,
-               profiles, render, safe, transcribe, usage)
+from . import (accounts, ai, alerts, auth, campaigns, config, creators, ctx, db, jobs, live, media, posting,
+               platforms, profiles, publish, render, safe, transcribe, usage)
 
 from . import tools as _tools  # noqa: E402
+from .aisha_api import router as aisha_router
 
 
 def _quiet(fn):
@@ -34,9 +35,11 @@ def _quiet(fn):
         print(f"  {e}", flush=True)
 
 
-app = FastAPI(title="PeakCut", docs_url=None, redoc_url=None, openapi_url=None)
+app = FastAPI(title="Aisha Video Studio", docs_url=None, redoc_url=None, openapi_url=None)
+app.include_router(aisha_router)
 WEB = config.ROOT / "web"
-OPEN = ("/api/auth/", "/pub/", "/api/public", "/auth/google/", "/auth/verify", "/brand/", "/assets/", "/healthz", "/favicon.ico", "/robots.txt", "/sitemap.xml")
+AISHA = "/api/aisha/v1/"
+OPEN = ("/api/auth/", "/pub/", "/api/public", "/auth/google/", "/auth/verify", "/brand/", "/assets/", "/healthz", "/favicon.ico", "/robots.txt", "/sitemap.xml", AISHA)
 PAGES = {"/": "landing.html", "/login": "auth.html", "/signup": "auth.html", "/reset": "reset.html",
          "/privacy": "legal.html", "/terms": "legal.html", "/acceptable-use": "legal.html"}
 VIDEO_TYPES = {".mp4", ".mov", ".mkv", ".webm", ".m4v", ".ts", ".flv"}
@@ -96,16 +99,17 @@ class Gate:
             await resp(scope, receive, send)
 
         if method not in ("GET", "HEAD", "OPTIONS"):
-            if not _from_here(req):
+            if not path.startswith(AISHA) and not _from_here(req):
                 return await deny(403, "Cross-site requests are not allowed.")
-            # Only the upload may be big. Everything else is a small form, and is cut off at 256 KB whatever its
+            # Only uploads may be big. Everything else is a small form, and is cut off at 256 KB whatever its
             # headers claim, so nobody can fill the server's memory by posting junk (signed in or not).
             piece = method == "PUT" and path.startswith("/api/upload/")
+            aisha_upload = method == "POST" and path == AISHA + "jobs/upload"
             cap = ((min(config.MAX_UPLOAD_MB, config.UPLOAD_PART_MB) if piece else config.MAX_UPLOAD_MB) + 8) * 1024 * 1024 \
-                if path == "/api/upload" or piece else 256 * 1024
+                if path == "/api/upload" or piece or aisha_upload else 256 * 1024
             try:
                 if int(req.headers.get("content-length") or 0) > cap:
-                    return await deny(413, f"That file is too big. The limit is {config.MAX_UPLOAD_MB} MB." if path == "/api/upload" else "That request is too large.")
+                    return await deny(413, f"That file is too big. The limit is {config.MAX_UPLOAD_MB} MB." if path in ("/api/upload", AISHA + "jobs/upload") else "That request is too large.")
             except ValueError:
                 return await deny(400, "Bad request.")
             seen, inner_receive = 0, receive
@@ -725,6 +729,8 @@ def create_from_link(body: dict = Body(...)):
         with _create_lock:
             _job_slots()
             job = jobs.create({"type": "url", "url": url, "name": url}, body.get("options") or {}, creator=creator)
+            job["platform"] = platforms.get(str(body.get("platform") or "vertical")).id
+            jobs.save(job)
     except (ValueError, TypeError) as e:
         raise HTTPException(400, str(e) if isinstance(e, ValueError) else "Those options aren't valid.")
     seen = media._PREVIEWS.get(url)  # already looked up while the user was typing: show it straight away
@@ -737,7 +743,7 @@ def create_from_link(body: dict = Body(...)):
 
 
 @app.post("/api/upload")
-def create_from_file(file: UploadFile = File(...), options: str = Form("{}"), creator: str = Form("")):
+def create_from_file(file: UploadFile = File(...), options: str = Form("{}"), creator: str = Form(""), platform: str = Form("")):
     _need_verified()
     _job_slots()
     name = re.sub(r"[^\w.\- ]", "_", Path(file.filename or "video.mp4").name)[:120]
@@ -774,6 +780,8 @@ def create_from_file(file: UploadFile = File(...), options: str = Form("{}"), cr
     finally:
         tmp.unlink(missing_ok=True)
     job["source"]["path"] = str(dest)
+    job["platform"] = platforms.get(platform or "vertical").id
+    jobs.save(job)
     jobs.enqueue(job)
     return jobs.public(job)
 
@@ -836,6 +844,7 @@ def upload_start(body: dict = Body(...)):
     if creator and not creators.get(creator):
         raise HTTPException(404, "No such creator")
     opts = body.get("options") if isinstance(body.get("options"), dict) else {}
+    selected_platform = platforms.get(str(body.get("platform") or "vertical")).id
     try:
         jobs.clean_options(opts)                 # refused now rather than after the whole file has been sent
     except (ValueError, TypeError):
@@ -854,7 +863,7 @@ def upload_start(body: dict = Body(...)):
     d = _up_root() / f"up-{upid}"
     d.mkdir()
     meta = {"user": ctx.uid(), "name": name, "ext": ext, "size": size, "part": part, "parts": -(-size // part),
-            "options": opts, "creator": creator, "t": time.time()}
+            "options": opts, "creator": creator, "platform": selected_platform, "t": time.time()}
     (d / "meta.json").write_text(json.dumps(meta), encoding="utf-8")
     return {"id": upid, "part": part, "parts": meta["parts"]}
 
@@ -916,6 +925,8 @@ def upload_finish(upid: str):
         shutil.rmtree(d, ignore_errors=True)
     _disk.pop(ctx.uid(), None)
     job["source"]["path"] = str(dest)
+    job["platform"] = platforms.get(meta.get("platform") or "vertical").id
+    jobs.save(job)
     jobs.enqueue(job)
     return jobs.public(job)
 
@@ -1307,6 +1318,54 @@ def overview():
     return posting.overview()
 
 
+@app.get("/api/platforms")
+def list_platforms():
+    return platforms.all_public()
+
+
+@app.get("/api/campaigns")
+def list_campaigns():
+    return campaigns.all_campaigns()
+
+
+@app.post("/api/campaigns")
+def new_campaign(body: dict = Body(...)):
+    try:
+        return campaigns.create(body)
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.put("/api/campaigns/{cid}")
+def edit_campaign(cid: str, body: dict = Body(...)):
+    try:
+        return campaigns.update(cid, body)
+    except KeyError:
+        raise HTTPException(404, "No such campaign")
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e))
+
+
+@app.delete("/api/campaigns/{cid}")
+def delete_campaign(cid: str):
+    if not campaigns.delete(cid):
+        raise HTTPException(404, "No such campaign")
+    return {"ok": True}
+
+
+@app.get("/api/schedules")
+def list_schedules():
+    return posting.schedules()
+
+
+@app.post("/api/schedules/{pid}/reschedule")
+def reschedule_post(pid: str, body: dict = Body(...)):
+    try:
+        return posting.reschedule(pid, float(body.get("due_at")))
+    except (ValueError, TypeError) as e:
+        raise HTTPException(400, str(e) or "Choose a valid time.")
+
+
 @app.get("/api/settings")
 def get_settings():
     return accounts.public_settings()
@@ -1447,6 +1506,27 @@ def apps_put(request: Request, body: dict = Body(...)):
         return accounts.save_app(str(body.get("platform", "")), body.get("client_id"), body.get("client_secret"))
     except ValueError as e:
         raise HTTPException(400, str(e))
+
+
+@app.get("/api/publish/{jid}")
+def publish_manifest(jid: str):
+    job = _job_or_404(jid)
+    if not publish.done_clips(job):
+        raise HTTPException(409, "No finished clips yet.")
+    return publish.manifest(job, platforms.get(job.get("platform") or "vertical"), base_url=config.PUBLIC_URL)
+
+
+@app.get("/api/publish/{jid}/bundle")
+def publish_bundle(jid: str):
+    job = _job_or_404(jid)
+    try:
+        f = publish.build_bundle(job, platforms.get(job.get("platform") or "vertical"))
+    except ValueError as e:
+        raise HTTPException(409, str(e))
+    from starlette.background import BackgroundTask
+    return FileResponse(f, filename=f"aisha-video-studio-kit-{jid}.zip", media_type="application/zip",
+                        headers={"Cache-Control": "private, no-store"},
+                        background=BackgroundTask(lambda: f.unlink(missing_ok=True)))
 
 
 @app.post("/api/posts")

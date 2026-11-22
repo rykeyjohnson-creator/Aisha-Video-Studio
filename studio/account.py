@@ -160,7 +160,8 @@ def delete_account(uid: str) -> dict:
         accounts._settings_mem.pop(uid, None)
     except Exception:  # noqa: BLE001
         pass
-    from . import posting
+    from . import campaigns, posting
+    campaigns.forget(uid)
     posting.forget(uid)                            # scheduled posts must not outlive the account that owns them
     usage.forget(uid)
     shutil.rmtree(config.user_dir(uid), ignore_errors=True)

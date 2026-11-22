@@ -65,7 +65,8 @@ def main() -> int:
                 ("fresh installs: ffmpeg, the speech model, AI errors", ["tests/test_tools.py"]),
                 ("the storage folder: full drive, open, move", ["tests/test_storage.py"]),
                 ("security: visitor address, email addresses, Google sign-in, prompts", ["tests/test_hardening.py"]),
-                ("long logs, the machine monitor, failed recordings, admin day totals", ["tests/test_robustness.py"])]
+                ("long logs, the machine monitor, failed recordings, admin day totals", ["tests/test_robustness.py"]),
+                ("Aisha automation API and publish kits", ["tests/test_aisha_api.py"])]
         for name, args in runs:
             print(f"\n=== {name} ===", flush=True)
             r = subprocess.run([sys.executable, *args], cwd=ROOT, env=env, capture_output=True, text=True, encoding="utf-8", errors="replace")

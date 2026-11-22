@@ -196,6 +196,28 @@ def cancel(pid):
     _mirror(p)
 
 
+def schedules() -> list:
+    """Everything this user has queued or recently posted, with the creator name attached."""
+    names = {c["id"]: c["name"] for c in creators.all_creators()}
+    rows = sorted(_mine(), key=lambda p: (p.get("due_at") or p.get("posted_at") or 0))
+    return [{**{k: v for k, v in p.items() if k != "user"}, "creator_name": names.get(p.get("creator"), "")}
+            for p in rows]
+
+
+def reschedule(pid: str, due_at: float) -> dict:
+    """Move a waiting post to another time. Only scheduled posts can move."""
+    if due_at < time.time() - 60:
+        raise ValueError("Choose a time in the future.")
+    with _lock:
+        p = next((p for p in _mine() if p["id"] == pid), None)
+        if not p or p["status"] != "scheduled":
+            raise ValueError("Only posts that are still waiting can be moved.")
+        p["due_at"] = float(due_at)
+        _save()
+    _mirror(p)
+    return {k: v for k, v in p.items() if k != "user"}
+
+
 def retry(pid):
     with _lock:
         p = next((p for p in _mine() if p["id"] == pid), None)

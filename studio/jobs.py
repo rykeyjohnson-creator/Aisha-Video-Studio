@@ -108,10 +108,11 @@ _lock = threading.RLock()
 on_clip_ready: list = []   # callbacks (job, clip), run once when a clip first finishes
 
 DEFAULTS = {"max_clips": 6, "min_len": 15, "max_len": 60, "style": "bounce", "layout": "blur", "quality": 720,
-            "range_start": None, "range_end": None, "captions": True}
+            "out_w": config.OUT_W, "out_h": config.OUT_H, "range_start": None, "range_end": None, "captions": True}
 
 
-LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080)}
+LIMITS = {"max_clips": (1, 20), "min_len": (5, 120), "max_len": (10, 180), "quality": (360, 1080),
+          "out_w": (240, 2160), "out_h": (240, 2160)}
 
 
 def clean_options(options) -> dict:
@@ -128,6 +129,8 @@ def clean_options(options) -> dict:
         if k in LIMITS:
             lo, hi = LIMITS[k]
             v = max(lo, min(hi, int(float(v))))
+            if k in ("out_w", "out_h"):
+                v = v // 2 * 2
         elif k == "style":
             v = v if v in render.STYLES else DEFAULTS["style"]
         elif k == "layout":
@@ -383,7 +386,9 @@ def render_one(job, clip, words):
             clip["end"] = min(clip["end"], job["duration"])
         local = dict(clip, start=clip["start"] - off, end=clip["end"] - off, hook=roman.to_roman(clip.get("hook") or ""))
         near = _caption_words(job, clip, words, off) if clip.get("captions", True) else []
-        out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"])
+        out = render.render_clip(src, d / "clips", clip["id"], local, near, job["width"], job["height"],
+                                 out_w=int(job["options"].get("out_w", config.OUT_W)),
+                                 out_h=int(job["options"].get("out_h", config.OUT_H)))
         clip.update(out, status="done", version=clip.get("version", 0) + 1, error=None)
         post = {k: clip[k] for k in ("title", "description", "hashtags", "hook", "start", "end", "score")}
         (d / "clips" / f"{clip['id']}.json").write_text(json.dumps(post, indent=1), encoding="utf-8")

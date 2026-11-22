@@ -109,39 +109,42 @@ def _groups(words, per):
     return out
 
 
-def geometry(src_w, src_h, layout):
-    """Where the video sits in the 1080x1920 frame, and where hook and captions go."""
+def geometry(src_w, src_h, layout, w=W, h=H):
+    """Where the video sits in the output frame, and where hook and captions go."""
     if src_h >= src_w and layout != "crop":
         layout = "crop"  # already vertical or square: nothing to gain from a blurred fill
     if layout == "blur":
-        fg_h = min(H, int(round(W * src_h / src_w / 2)) * 2)
+        fg_h = min(h, int(round(w * src_h / src_w / 2)) * 2)
     elif layout == "zoom":
-        fg_h = 1000
+        fg_h = int(h * 1000 / 1920)
     else:
-        fg_h = H
-    top = (H - fg_h) // 2
+        fg_h = h
+    top = (h - fg_h) // 2
     if layout in ("crop", "gameplay"):
-        return layout, fg_h, 300, 1380
-    return layout, fg_h, max(230, top - 190), min(1640, top + fg_h + 180)
+        return layout, fg_h, int(h * 300 / 1920), int(h * 1380 / 1920)
+    return layout, fg_h, max(int(h * 230 / 1920), top - int(h * 190 / 1920)), min(int(h * 1640 / 1920), top + fg_h + int(h * 180 / 1920))
 
 
-def _hook_events(hook, dur, y):
+def _hook_events(hook, dur, y, w=W, h=H):
     """The heading: dark text in a white rounded box that fits it, on one line or two balanced ones."""
-    f, size = _Font.get(HOOK["font"]), HOOK["size"]
+    s = min(w / W, h / H)
+    f, size = _Font.get(HOOK["font"]), int(HOOK["size"] * s)
+    max_w = int(w * 0.83)
     words = hook.split()
     if not words:
         return []
     lines = [" ".join(words)]
-    if f.width(lines[0], size) > HOOK["max_w"] and len(words) > 1:      # two lines, split where they come out most even
+    if f.width(lines[0], size) > max_w and len(words) > 1:      # two lines, split where they come out most even
         cut = min(range(1, len(words)), key=lambda i: max(f.width(" ".join(words[:i]), size), f.width(" ".join(words[i:]), size)))
         lines = [" ".join(words[:cut]), " ".join(words[cut:])]
     widest = max(f.width(l, size) for l in lines)
-    if widest > HOOK["max_w"]:
-        size = max(40, int(size * HOOK["max_w"] / widest))
+    if widest > max_w:
+        size = max(40, int(size * max_w / widest))
         widest = max(f.width(l, size) for l in lines)
     line_h = f.em(size) * 1.16
-    bw, bh = widest + 2 * HOOK["pad_x"], line_h * len(lines) + 2 * HOOK["pad_y"]
-    x0, y0, r = (W - bw) / 2, y - bh / 2, min(HOOK["radius"], bh / 2)
+    pad_x, pad_y = int(HOOK["pad_x"] * s), int(HOOK["pad_y"] * s)
+    bw, bh = widest + 2 * pad_x, line_h * len(lines) + 2 * pad_y
+    x0, y0, r = (w - bw) / 2, y - bh / 2, min(int(HOOK["radius"] * s), bh / 2)
     x1, y1 = x0 + bw, y0 + bh
     n = lambda v: f"{v:.0f}"                                                         # noqa: E731
     box = (f"m {n(x0 + r)} {n(y0)} l {n(x1 - r)} {n(y0)} b {n(x1)} {n(y0)} {n(x1)} {n(y0)} {n(x1)} {n(y0 + r)} "
@@ -152,36 +155,39 @@ def _hook_events(hook, dur, y):
     ev = [f"Dialogue: 3,{span},Hook,,0,0,0,,{{\\an7\\pos(0,0)\\fad(160,0)\\c&H{HOOK['box']}&\\p1}}{box}{{\\p0}}"]
     for i, line in enumerate(lines):
         cy = y - line_h * (len(lines) - 1) / 2 + i * line_h - f.cap_shift(size)
-        ev.append(f"Dialogue: 4,{span},Hook,,0,0,0,,{{\\an5\\pos({W // 2},{cy:.0f})\\fad(160,0)\\fs{size}}}{line}")
+        ev.append(f"Dialogue: 4,{span},Hook,,0,0,0,,{{\\an5\\pos({w // 2},{cy:.0f})\\fad(160,0)\\fs{size}}}{line}")
     return ev
 
 
-def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y) -> str:
+def build_ass(words, start, end, hook, style_name, highlight, hook_y, cap_y, w=W, h=H) -> str:
     st = STYLES.get(style_name, STYLES["bounce"])
+    s = min(w / W, h / H)
+    cap_size, hook_size = max(16, int(st["size"] * s)), max(16, int(HOOK["size"] * s))
+    cap_max_w = int(w * CAP_MAX_W / W)
     words = [dict(w, s=w["s"] - CAPTION_LEAD, e=w["e"] - CAPTION_LEAD) for w in words]
     strong = {_key(h) for h in highlight if _key(h)}
     head = f"""[Script Info]
 ScriptType: v4.00+
-PlayResX: {W}
-PlayResY: {H}
+PlayResX: {w}
+PlayResY: {h}
 WrapStyle: 2
 ScaledBorderAndShadow: yes
 
 [V4+ Styles]
 Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Cap,{st['font']},{st['size']},&H00{st['base']},&H00{st['base']},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,{st['outline']},0,5,0,0,0,1
-Style: Hook,{HOOK['font']},{HOOK['size']},&H00{HOOK['ink']},&H00{HOOK['ink']},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
+Style: Cap,{st['font']},{cap_size},&H00{st['base']},&H00{st['base']},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,{st['outline']},0,5,0,0,0,1
+Style: Hook,{HOOK['font']},{hook_size},&H00{HOOK['ink']},&H00{HOOK['ink']},&H00000000,&H00000000,0,0,0,0,100,100,0,0,1,0,0,5,0,0,0,1
 
 [Events]
 Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
 """
     dur = end - start
-    ev = _hook_events(_clean(hook), dur, hook_y)
+    ev = _hook_events(_clean(hook), dur, hook_y, w, h)
     f = _Font.get(st["font"])
     inside = [dict(w, w=_clean(w["w"])) for w in words if w["s"] >= start - 0.05 and w["s"] < end]
     inside = sorted((w for w in inside if w["w"]), key=lambda w: w["s"])
-    for i, w in enumerate(inside[:-1]):
-        w["e"] = max(w["s"], min(w["e"], inside[i + 1]["s"]))
+    for i, word in enumerate(inside[:-1]):
+        word["e"] = max(word["s"], min(word["e"], inside[i + 1]["s"]))
     groups = _groups(inside, st["per"])
     for gi, g in enumerate(groups):
         g_start = max(0.0, g[0]["s"] - start)
@@ -196,27 +202,27 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
             # A script the caption font cannot draw (Japanese, Thai, Chinese...): its words cannot be measured, so
             # they are not placed one by one. The line is drawn whole and centred, in a font the system has for it.
             line = " ".join(texts)
-            fs = max(44, min(int(st["size"] * 0.7), int(1500 / max(1, len(line)) * 1.6)))
-            ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(g_end)},Cap,,60,60,0,,{{\\an5\\pos({W // 2},{cap_y:.0f})\\q0\\fs{fs}}}{line}")
+            fs = max(44, min(int(cap_size * 0.7), int(w / max(1, len(line)) * 1.6)))
+            ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(g_end)},Cap,,60,60,0,,{{\\an5\\pos({w // 2},{cap_y:.0f})\\q0\\fs{fs}}}{line}")
             continue
-        size = st["size"]
+        size = cap_size
         gap = f.width("n n", size) - 2 * f.width("n", size) + (2 * st["outline"] + 6) * size / st["size"]   # a space, plus room for both outlines
         total = sum(f.width(t, size) for t in texts) + gap * (len(texts) - 1)
-        if total > CAP_MAX_W:                                  # a long phrase: shrink it to fit, never run off the frame
-            size = max(36, int(size * CAP_MAX_W / total))
+        if total > cap_max_w:                                  # a long phrase: shrink it to fit, never run off the frame
+            size = max(36, int(size * cap_max_w / total))
             gap = f.width("n n", size) - 2 * f.width("n", size) + (2 * st["outline"] + 6) * size / st["size"]   # a space, plus room for both outlines
             total = sum(f.width(t, size) for t in texts) + gap * (len(texts) - 1)
         cy = cap_y - f.cap_shift(size)
-        x = (W - total) / 2
+        x = (w - total) / 2
         p = st["pop"]
-        for i, (w, t) in enumerate(zip(g, texts)):
+        for i, (word, t) in enumerate(zip(g, texts)):
             wd = f.width(t, size)
             p = max(104, min(st["pop"], 100 + int(2200 / max(wd, 1))))   # long words grow less, so they never touch their neighbours
             pos = f"\\an5\\pos({x + wd / 2:.0f},{cy:.0f})\\fs{size}"
             x += wd + gap
-            a = max(g_start, w["s"] - start)
+            a = max(g_start, word["s"] - start)
             b = (g[i + 1]["s"] - start) if i + 1 < len(g) else g_end
-            base = st["strong"] if _key(w["w"]) in strong else st["base"]
+            base = st["strong"] if _key(word["w"]) in strong else st["base"]
             if a - g_start >= 0.02:                                                   # waiting to be said
                 ev.append(f"Dialogue: 1,{_ts(g_start)},{_ts(a)},Cap,,0,0,0,,{{{pos}\\c&H{base}&}}{t}")
             if b - a >= 0.02:                                                         # being said: colour and a quick pop, in front
@@ -232,31 +238,37 @@ PIP_W = 380            # how wide the facecam is in the 1080-wide frame
 PIP_MARGIN = 26
 
 
-def _filter(layout, fg_h, facecam=None):
+def _filter(layout, fg_h, facecam=None, w=W, h=H):
+    scale = min(w / W, h / H)
+    pip_w = max(120, int(PIP_W * scale))
+    pip_margin = max(8, int(PIP_MARGIN * scale))
     if layout == "gameplay" and facecam:
         # The game fills the screen, and the webcam sits in the top corner of it, so a viewer sees
         # the play and the face at the same time.
         fx, fy, fw, fh = (int(v) for v in facecam)
         if fw > 8 and fh > 8:
-            pip_h = max(2, int(round(PIP_W * fh / fw)))
+            pip_h = max(2, int(round(pip_w * fh / fw)))
             return (f"[0:v]fps={config.OUT_FPS},split=2[base][fc];"
-                    f"[base]scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[b];"
-                    f"[fc]crop={fw}:{fh}:{fx}:{fy},scale={PIP_W}:{pip_h},setsar=1[p];"
-                    f"[b][p]overlay={W - PIP_W - PIP_MARGIN}:{PIP_MARGIN}[v0];")
+                    f"[base]scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1[b];"
+                    f"[fc]crop={fw}:{fh}:{fx}:{fy},scale={pip_w}:{pip_h},setsar=1[p];"
+                    f"[b][p]overlay={w - pip_w - pip_margin}:{pip_margin}[v0];")
     if layout == "crop" or (layout == "gameplay" and not facecam):
-        return f"[0:v]fps={config.OUT_FPS},scale={W}:{H}:force_original_aspect_ratio=increase,crop={W}:{H},setsar=1[v0];"
+        return f"[0:v]fps={config.OUT_FPS},scale={w}:{h}:force_original_aspect_ratio=increase,crop={w}:{h},setsar=1[v0];"
+    bw, bh = max(2, int(w * 0.25)), max(2, int(h * 0.25))
+    oy = max(0, (h - fg_h) // 2)
     return (f"[0:v]fps={config.OUT_FPS},split=2[a][b];"
-            f"[a]scale=270:480:force_original_aspect_ratio=increase,crop=270:480,boxblur=6:2,"
-            f"scale={W}:{H},eq=brightness=-0.14:saturation=1.15[bg];"
-            f"[b]scale={W}:{fg_h}:force_original_aspect_ratio=increase,crop={W}:{fg_h}[fg];"
-            f"[bg][fg]overlay=0:(H-h)/2,setsar=1[v0];")
+            f"[a]scale={bw}:{bh}:force_original_aspect_ratio=increase,crop={bw}:{bh},boxblur=6:2,"
+            f"scale={w}:{h},eq=brightness=-0.14:saturation=1.15[bg];"
+            f"[b]scale={w}:{fg_h}:force_original_aspect_ratio=increase,crop={w}:{fg_h}[fg];"
+            f"[bg][fg]overlay=0:{oy},setsar=1[v0];")
 
 
-def _hook_y(layout, hook_y, facecam=None):
+def _hook_y(layout, hook_y, facecam=None, w=W, h=H):
     """Where the heading goes. In the gameplay layout the webcam sits in the top corner, so a heading
     across the top would run under it: it goes just below the picture instead."""
     if layout == "gameplay" and facecam and len(facecam) == 4 and facecam[2] > 8:
-        return PIP_MARGIN + int(round(PIP_W * facecam[3] / facecam[2])) + 32
+        scale = min(w / W, h / H)
+        return max(8, int(PIP_MARGIN * scale)) + int(round(max(120, int(PIP_W * scale)) * facecam[3] / facecam[2])) + 32
     return hook_y
 
 
@@ -264,35 +276,37 @@ _qsv_ok = None
 RENDER_SECONDS = 600      # one clip's video encode; far beyond normal, so a frozen encoder is stopped, not waited on
 
 
-def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, src_w: int, src_h: int) -> dict:
+def render_clip(src: Path, out_dir: Path, name: str, clip: dict, words: list, src_w: int, src_h: int,
+                out_w: int = W, out_h: int = H) -> dict:
     """Writes <name>.mp4, <name>.jpg and <name>.ass into out_dir. Returns file names."""
     out_dir.mkdir(parents=True, exist_ok=True)
+    out_w, out_h = max(240, int(out_w) // 2 * 2), max(240, int(out_h) // 2 * 2)
     start, end = clip["start"], clip["end"]
-    layout, fg_h, hook_y, cap_y = geometry(src_w, src_h, clip.get("layout", "blur"))
+    layout, fg_h, hook_y, cap_y = geometry(src_w, src_h, clip.get("layout", "blur"), out_w, out_h)
     face = clip.get("facecam")
     if layout == "gameplay" and not (face and len(face) == 4):
         layout = "crop"     # no webcam found: the game fills the screen, which is still the right shape
-    hook_y = _hook_y(layout, hook_y, face)
+    hook_y = _hook_y(layout, hook_y, face, out_w, out_h)
     ass = build_ass(words if clip.get("captions", True) else [], start, end, clip.get("hook", ""), clip.get("style", "bounce"),
-                    clip.get("highlight_words", []), hook_y, cap_y)
+                    clip.get("highlight_words", []), hook_y, cap_y, out_w, out_h)
     # The clip is made in a short work folder and moved into place afterwards. The caption step of ffmpeg cannot
     # open files whose full path is longer than 260 characters on Windows, which a data folder deep inside other
     # folders easily reaches. Inside the work folder every name is short and relative (a drive colon would also
     # break the filter syntax).
     work = Path(tempfile.mkdtemp(prefix="pk"))
     try:
-        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, face=face)
+        return _render_in(work, src, out_dir, name, start, end, layout, fg_h, ass, face=face, out_w=out_w, out_h=out_h)
     finally:
         shutil.rmtree(work, ignore_errors=True)
 
 
-def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str, face=None) -> dict:
+def _render_in(work: Path, src: Path, out_dir: Path, name: str, start, end, layout, fg_h, ass: str, face=None, out_w: int = W, out_h: int = H) -> dict:
     global _qsv_ok
     (work / f"{name}.ass").write_text(ass, encoding="utf-8")
     (work / "f").mkdir()
     for f in config.FONTS_DIR.glob("*.ttf"):
         shutil.copyfile(f, work / "f" / f.name)
-    fc = _filter(layout, fg_h, face) + f"[v0]ass={name}.ass:fontsdir=f[v]"
+    fc = _filter(layout, fg_h, face, out_w, out_h) + f"[v0]ass={name}.ass:fontsdir=f[v]"
     base = ["ffmpeg", "-y", "-v", "error", "-ss", f"{start:.2f}", "-t", f"{end - start:.2f}", "-i", str(src),
             "-filter_complex", fc, "-map", "[v]", "-map", "0:a:0", "-af", "loudnorm=I=-14:TP=-1.5:LRA=11",
             "-c:a", "aac", "-b:a", "160k", "-ar", "48000", "-movflags", "+faststart", "-pix_fmt"]

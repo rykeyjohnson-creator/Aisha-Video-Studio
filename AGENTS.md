@@ -19,10 +19,11 @@ are there, and only then offer to delete the old folder. Never delete anything w
 
 ## Run and test
 
-- Run: `python -m studio.server` (settings from `.env`; see `.env.example`). Needs Python 3.10+ and `ffmpeg`.
+- Run: `./run-aisha.sh` (or `python -m studio.server`). Settings come from `.env`; see `.env.example`. Needs Python 3.10+ and `ffmpeg`.
 - The speech model (about 480 MB) downloads by itself on first start; `python -m studio.fetch_model` gets it ahead of time.
 - Tests: `python tests/run.py`. It starts a throwaway copy on a spare port with an empty data folder. Run it
-  before and after any change to `studio/`. No keys needed.
+  before and after any change to `studio/`. No keys needed. `tests/test_aisha_api.py` covers the automation API
+  and publish kits without network or rendering.
 - To try a risky change by hand without touching real data:
   `PEAKCUT_DATA=<temp folder> PEAKCUT_PORT=8766 python -m studio.server`.
 
@@ -36,6 +37,9 @@ are there, and only then offer to delete the old folder. Never delete anything w
 | `studio/brain.py` | The prompts: finding clips, live judging, hooks and titles, caption fixes |
 | `studio/usage.py` | The record of AI calls and tokens shown on the AI usage page |
 | `studio/jobs.py` | The video pipeline and the fair queue |
+| `studio/platforms.py` | Platform presets adapted from AutoClip (layout, style, length, hashtags) |
+| `studio/publish.py` | Publish-kit JSON and ZIP packaging |
+| `studio/aisha_api.py` | Token-protected `/api/aisha/v1` automation endpoints |
 | `studio/live.py` | Live recording and clipping |
 | `studio/transcribe.py`, `studio/asr_worker.py` | Speech to text, here or on a second machine |
 | `studio/render.py` | Cutting, layouts and captions (ffmpeg and Pillow) |
